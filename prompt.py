@@ -1,8 +1,8 @@
 # =============================
 # Prompts
 # =============================
-IDEA_FIRST_PROMPT = """Here are the design space you want to explore:
-{design_space}
+IDEA_FIRST_PROMPT = """Here is project overview:
+{project_overview}
 
 Here are the existing artefacts:
 '''
@@ -16,9 +16,8 @@ Constraints include:
 - Option: possible alternatives for an aspect (e.g., for the aspect “Display,” options might include LED panels or projection).
 
 TASK:
-Based on the design space, captures the salient components of the design space.
+Based on the project overview, captures the salient components of its design space.
 Ideate creative and concrete Aspects / Options to understand the design space.
-
 
 Respond in the following format:
 THOUGHT:
