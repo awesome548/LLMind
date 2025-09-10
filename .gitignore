@@ -2,6 +2,10 @@
 __pycache__/
 *.py[codz]
 *$py.class
+data/
+chroma_db/
+MISC/
+node_modules/
 
 # C extensions
 *.so
