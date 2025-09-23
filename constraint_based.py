@@ -206,12 +206,20 @@ def run_generate(
     project_overview: str,
     existing_artefacts: List[Dict[str, Any]],
     num_reflections: int,
-    out_file: Path,
+    dev_mode: bool = False,
 ) -> Dict[str, Any]:
     existing_artefacts_string = "\n\n".join(
         f"{art.get('ID')}: {art.get('Description')}" for art in existing_artefacts
     ) or "(none yet)"
 
+    if dev_mode:
+        typer.secho("-- Dev mode -- ", fg=typer.colors.YELLOW)
+        typer.secho(
+            IDEA_FIRST_PROMPT.format(
+                project_overview=project_overview,
+                existing_artefacts=existing_artefacts_string,
+                num_reflections=num_reflections,
+            ), fg=typer.colors.YELLOW)
     typer.secho("Generating initial idea...", fg=typer.colors.GREEN)
     first_text = chat.send_message(
         IDEA_FIRST_PROMPT.format(
@@ -238,14 +246,13 @@ def run_generate(
                 last_idea = maybe
             typer.secho(new_text, fg=typer.colors.CYAN)
             typer.secho(
-                f"Reflection {i}/{num_reflections} complete. Updated aspects: {last_idea.get('Aspects')}",
+                f"Reflection {i}/{num_reflections} complete.  {new_text}",
                 fg=typer.colors.GREEN
             )
         except Exception as e:
             typer.secho(f"Reflection {i}/{num_reflections} failed: {e}", fg=typer.colors.RED)
             continue
 
-    typer.secho(f"Final idea aspects: {last_idea.get('Aspects')}", fg=typer.colors.CYAN)
 
     return last_idea
 
@@ -273,7 +280,7 @@ def _common_options():
             help='Path to a JSON file containing "system" and "project" fields.'
         ),
         out_file=typer.Option(
-            Path("./data/schema"),
+            Path("./taxonomy/taxonomy"),
             help="Path to the output JSON file for the final design-space schema."
         ),
         num_reflections=typer.Option(
@@ -283,8 +290,8 @@ def _common_options():
             help="Number of self-review iterations per idea (max)."
         ),
         ids_file=typer.Option(
-            Path("data/seletected_projects.json"),
-            "--ids",
+            None,
+            "-i",
             help="Path to farthest-selected ids JSON from clustering."
         ),
         selected_mode=typer.Option(
@@ -292,6 +299,11 @@ def _common_options():
             "--mode",
             help="Use 'details' or 'both' (details + descriptions)."
         ),
+        dev_mode=typer.Option(
+            False,
+            "--dev",
+            help="Enable dev mode (not used currently)."
+        )
     )
 
 @app.command("gemini")
@@ -301,6 +313,7 @@ def gemini_generate(
     ids_file: Path = _common_options()["ids_file"],
     num_reflections: int = _common_options()["num_reflections"],
     selected_mode: Optional[str] = _common_options()["selected_mode"],
+    dev_mode: bool = _common_options()["dev_mode"],
     model_name: str = typer.Option("gemini-2.5-flash", help="Gemini model to use."),
 ):
     """
@@ -323,7 +336,7 @@ def gemini_generate(
         typer.echo(f"Warning: failed to build artefacts from ids ({ids_file}): {e}")
 
     chat = GeminiChat(model=model_name, system_message=system_message)
-    final = run_generate(chat, project_overview, existing_artefacts, num_reflections, out_file)
+    final = run_generate(chat, project_overview, existing_artefacts, num_reflections, dev_mode)
     save_json(out_file, final, str(selected_mode), model_name)
 
 
@@ -334,6 +347,7 @@ def openai_generate(
     ids_file: Path = _common_options()["ids_file"],
     num_reflections: int = _common_options()["num_reflections"],
     selected_mode: Optional[str] = _common_options()["selected_mode"],
+    dev_mode: bool = _common_options()["dev_mode"],
     model_name: str = typer.Option(
         "gpt-4o-mini",
         help="OpenAI model to use (e.g., gpt-4o, gpt-4o-mini, gpt-4.1, o3-mini)."
@@ -359,7 +373,7 @@ def openai_generate(
         typer.echo(f"Warning: failed to build artefacts from ids ({ids_file}): {e}")
 
     chat = OpenAIChat(model=model_name, system_message=system_message)
-    final = run_generate(chat, project_overview, existing_artefacts, num_reflections, out_file)
+    final = run_generate(chat, project_overview, existing_artefacts, num_reflections, dev_mode)
     save_json(out_file, final, str(selected_mode), model_name)
 
 
