@@ -31,11 +31,12 @@ OPENAI_MODEL = str(os.getenv("OPENAI_MODEL"))
 CHROMA_DB_PATH = Path(str(os.getenv("CHROMA_DB_PATH")))
 PLOTS_DIR = Path(str(os.getenv("PLOTS_DIR")))
 DATA_DIR = Path(str(os.getenv("DATA_DIR")))
+ANALYSIS_DIR = Path(str(os.getenv("ANALYSIS_DIR")))
 
 INPUT_PATH = DATA_DIR / "media_architecture.json"
 OUTPUT_PATH = DATA_DIR / "cleaned_media_architecture.json"
-ANALYSIS_PATH = DATA_DIR / "analysis_summary.json"
-MIN_EXAMPLES_PATH = DATA_DIR / "min_detail_examples.json"
+ANALYSIS_PATH = ANALYSIS_DIR / "analysis_summary.json"
+MIN_EXAMPLES_PATH = ANALYSIS_DIR / "min_detail_examples.json"
 
 app = typer.Typer(add_completion=False, help="Analyze, clean, and embed dataset")
 
@@ -69,7 +70,8 @@ def clean_items(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         desc = desc_raw.strip()
         if not desc:
             continue
-        if len(desc.split()) > 300:
+        word_count = len(desc.split())
+        if word_count < 10 or word_count > 300:
             continue
         item_copy = dict(item)
         project_id = extract_project_id(item_copy.get("url", ""))
@@ -99,8 +101,8 @@ def analyze(
     save_plot: bool = True,
     bins: int = typer.Option(50, help="Histogram bins"),
 ):
-    """Analyze dataset Details: counts and histogram plot.
-
+    """
+    Analyze dataset Details: counts and histogram plot.
     Pass a custom input JSON via --file/-f.
     """
     data = load_raw(file)
@@ -192,6 +194,7 @@ def clean(
     output: Path = typer.Option(OUTPUT_PATH, "--output", "-o", help="Path to write cleaned JSON"),
 ):
     """
+    Clean raw data and save to output JSON.
     Remove url/html_main and add id.
     Remove entries that
     - does not have "Details"
@@ -209,7 +212,9 @@ def clean(
 def embed(
     file: Path = typer.Option(OUTPUT_PATH, "--file", "-f", help="Path to cleaned JSON file"),
 ):
-    """Embed cleaned data and upsert into Chroma."""
+    """
+    Embed cleaned data and save into Chroma(after clanning)
+    """
     if file.exists():
         cleaned = json.loads(file.read_text(encoding="utf-8"))
     else:

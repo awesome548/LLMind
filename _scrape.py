@@ -56,6 +56,7 @@ class ProjectRecord:
     Name: str
     Descriptions: str
     Details: str
+    image_href: Optional[str] = None
     html_main: Optional[str] = None
 
 
@@ -214,11 +215,23 @@ def parse_project_page(url: str, html: str) -> ProjectRecord:
     if SAVE_HTML_SNAPSHOT:
         html_main = str(extract_main_container(soup))
 
+    image_href: Optional[str] = None
+    gallery_img = soup.select_one("img.gallery.img-fluid.img-responsive")
+    if gallery_img:
+        parent_link = gallery_img.find_parent("a", href=True)
+        if parent_link and parent_link["href"]:
+            image_href = urljoin(url, parent_link["href"])
+        else:
+            src = gallery_img.get("src")
+            if src:
+                image_href = urljoin(url, src)
+
     return ProjectRecord(
         url=url,
         Name=titlepro,
         Descriptions=col_sm_6,
         Details=col_sm_4,
+        image_href=image_href,
         html_main=html_main,
     )
 
@@ -251,7 +264,7 @@ def scrape(
         "media_architecture_projects.json",
         "--out",
         "-o",
-        help="Path to write JSON output."
+        help="JSON file name (not directory; will be placed under DATA_DIR)."
     ),
     delay: float = typer.Option(
         0.8,

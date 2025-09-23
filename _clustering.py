@@ -278,6 +278,7 @@ def cmd_cluster(
     """Reduce to 2D, KMeans cluster, and output JSON or plot."""
     client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
     ids, metas, embs = fetch_all_from_chroma(client, collection_name=COLLECTION_NAME, batch_size=batch_size)
+    typer.secho(f"Fetched {len(ids)} items from Chroma collection '{COLLECTION_NAME}'", fg=typer.colors.GREEN)
 
     if not ids:
         typer.echo("[]")
@@ -326,7 +327,7 @@ def cmd_cluster(
     elif output_json:
         with open(output_json, 'w', encoding='utf-8') as f:
             json.dump(out, f, default=np_default, indent=2)
-        typer.echo(f"JSON output saved to: {output_json}")
+        typer.secho(f"JSON output saved to: {output_json}", fg=typer.colors.BLUE)
     else:
         json.dump(out, sys.stdout, default=np_default)
 
