@@ -1,27 +1,32 @@
-# cluster_from_chroma.py
-# Fetch items (ids, metadatas, embeddings) from a Chroma collection,
-# reduce to 2D, cluster them, and output JSON.
-# Optionally, shows a scatter plot when executed directly.
-#
-# Usage:
-#   pip install chromadb scikit-learn numpy matplotlib umap-learn
-#   python cluster_from_chroma.py --db-path ./chroma_db --collection mab_projects --algo auto --clusters 8 --plot
-#   python cluster_from_chroma.py --db-path ./chroma_db --collection mab_projects --save-json output.json
-#
-# Without --plot or --save-json, it prints JSON to stdout.
+# Simple CLI for clustering and farthest selection on Chroma embeddings.
+# Examples:
+#   python clustering.py cluster --db-path ./chroma_db --collection mab_projects --plot
+#   python clustering.py select-farthest --db-path ./chroma_db --collection mab_projects --k 20 --json-file data/cleaned_media_arch.json
 
 from __future__ import annotations
 
-import argparse
 import json
 import math
 import os
 import sys
+import warnings
 from typing import Any, Dict, List, Tuple
+from dotenv import load_dotenv
+from pathlib import Path
 
 import numpy as np
 import chromadb
+import typer
 
+load_dotenv()
+
+# Quiet noisy runtime messages during clustering:
+# - OMP: Info #276 from Intel OpenMP
+# - UMAP n_jobs override warning when a seed is set
+os.environ.setdefault("KMP_WARNINGS", "0")      # suppress Intel OpenMP info/warnings
+os.environ.setdefault("OMP_DISPLAY_ENV", "FALSE")
+CHROMA_DB_PATH = Path(str(os.getenv("CHROMA_DB_PATH")))
+COLLECTION_NAME = str(os.getenv("COLLECTION_NAME"))
 
 # ---------- Helpers ----------
 def safe_imports(algo: str = "auto"):
@@ -127,7 +132,15 @@ def reduce_2d(
             metric=metric,
             random_state=random_state,
         )
-        return reducer.fit_transform(X_in)
+        # Suppress specific UMAP warning about forcing n_jobs=1 when random_state is set.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"n_jobs value .* overridden to 1 by setting random_state.*",
+                category=UserWarning,
+                module=r"umap(\.|$)"
+            )
+            return reducer.fit_transform(X_in)
 
     if reducer_name == "tsne":
         # sklearn TSNE has limited metric support; for cosine we unit-normalize first
@@ -215,86 +228,130 @@ def plot_clusters(out: List[Dict[str, Any]]):
     plt.show()
 
 
-# ---------- Main ----------
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--db-path", default=os.getenv("CHROMA_DB_PATH", "./chroma_db"))
-    p.add_argument("--collection", default=os.getenv("COLLECTION_NAME", "mab_projects"))
+# ---------- Diverse subset selection ----------
+def select_farthest(
+    embs: np.ndarray | List[List[float]],
+    k: int = 20,
+    seed: int = 42,
+) -> List[int]:
+    """Greedy farthest-point subset (cosine distance)."""
+    X = np.asarray(embs, dtype=float)
+    n = X.shape[0]
+    if n == 0 or k <= 0:
+        return []
+    if k >= n:
+        return list(range(n))
 
-    # Reducer + hyperparams
-    p.add_argument("--algo", choices=["auto", "umap", "tsne", "pca"], default="auto")
-    p.add_argument("--metric", choices=["euclidean", "cosine"], default="euclidean")
-    p.add_argument("--perplexity", type=float, default=None, help="t-SNE perplexity (auto if omitted)")
-    p.add_argument("--neighbors", type=int, default=15, help="UMAP n_neighbors")
-    p.add_argument("--min-dist", type=float, default=0.1, dest="min_dist", help="UMAP min_dist")
-    p.add_argument("--pre-pca", type=int, default=64, help="If >0, run PCA to this many dims before UMAP/t-SNE")
+    Xn = maybe_unit_normalize(X)
+    rng = np.random.RandomState(seed)
+    start = int(rng.randint(0, n))
+    sel = [start]
+    d_min = 1.0 - (Xn @ Xn[start])
+    d_min[start] = -np.inf
+    while len(sel) < k:
+        nxt = int(np.argmax(d_min))
+        sel.append(nxt)
+        d_new = 1.0 - (Xn @ Xn[nxt])
+        d_min = np.minimum(d_min, d_new)
+        d_min[nxt] = -np.inf
+    return sel
 
-    # Clustering / IO
-    p.add_argument("--clusters", type=int, default=8)
-    p.add_argument("--batch-size", type=int, default=500)
-    p.add_argument("--random-state", type=int, default=42)
-    p.add_argument("--plot", action="store_true", help="Show a test plot instead of JSON output")
-    p.add_argument("--save-json", type=str, help="Save JSON output to specified file path")
-    args = p.parse_args()
 
-    client = chromadb.PersistentClient(path=args.db_path)
-    ids, metas, embs = fetch_all_from_chroma(client, collection_name=args.collection, batch_size=args.batch_size)
+# ---------- Typer CLI ----------
+app = typer.Typer(no_args_is_help=True, add_completion=False)
+
+
+@app.command("cluster")
+def cmd_cluster(
+    algo: str = typer.Option("auto", help="Dimensionality reducer: auto|umap|tsne|pca"),
+    metric: str = typer.Option("euclidean", help="Distance metric for reducer: euclidean|cosine"),
+    perplexity: float | None = typer.Option(None, help="t-SNE perplexity; auto if omitted"),
+    neighbors: int = typer.Option(15, help="UMAP n_neighbors"),
+    min_dist: float = typer.Option(0.1, help="UMAP min_dist"),
+    pre_pca: int = typer.Option(64, help="If >0, run PCA to this many dims before UMAP/t-SNE"),
+    clusters: int = typer.Option(8, help="Number of KMeans clusters"),
+    batch_size: int = typer.Option(500, help="Batch size for Chroma fetch"),
+    random_state: int = typer.Option(42, help="Random seed"),
+    plot: bool = typer.Option(False, help="Show a scatter plot instead of JSON"),
+    output_json: str | None = typer.Option(None,"--output","-o",help="Save JSON output to file"),
+):
+    """Reduce to 2D, KMeans cluster, and output JSON or plot."""
+    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    ids, metas, embs = fetch_all_from_chroma(client, collection_name=COLLECTION_NAME, batch_size=batch_size)
 
     if not ids:
-        print("[]")
-        return
+        typer.echo("[]")
+        raise typer.Exit()
 
     X = np.array(embs, dtype=float)
-
-    reducer_name, Reducer = safe_imports(algo=args.algo)
+    reducer_name, Reducer = safe_imports(algo=algo)
 
     # Reasonable auto-perplexity for t-SNE: ~N/100 bounded
-    if args.perplexity is None:
-        # t-SNE requires 5 < perplexity < N; clamp safely
+    if perplexity is None:
         auto_perp = max(5, min(50, int(len(ids) / 100) or 5))
-        perplexity = min(auto_perp, max(5, len(ids) - 1))
+        perplexity_val = min(auto_perp, max(5, len(ids) - 1))
     else:
-        perplexity = max(5, min(int(args.perplexity), max(5, len(ids) - 1)))
+        perplexity_val = max(5, min(int(perplexity), max(5, len(ids) - 1)))
 
     X2d = reduce_2d(
         X,
         reducer_name,
         Reducer,
-        metric=args.metric,
-        perplexity=perplexity,
-        n_neighbors=args.neighbors,
-        min_dist=args.min_dist,
-        random_state=args.random_state,
-        pre_pca=(args.pre_pca if args.pre_pca and args.pre_pca > 0 else None),
+        metric=metric,
+        perplexity=perplexity_val,
+        n_neighbors=neighbors,
+        min_dist=min_dist,
+        random_state=random_state,
+        pre_pca=(pre_pca if pre_pca and pre_pca > 0 else None),
     )
 
-    k = max(1, min(args.clusters, len(ids)))
-    clusters = kmeans_labels(X2d, k)
+    k = max(1, min(clusters, len(ids)))
+    clabels = kmeans_labels(X2d, k)
 
     x_n = normalize01(X2d[:, 0])
     y_n = normalize01(X2d[:, 1])
 
-    out = []
+    out: List[Dict[str, Any]] = []
     for i, _id in enumerate(ids):
         meta = metas[i] or {}
         out.append({
             "id": _id,
-            "name": meta.get("Name"),
-            "description": meta.get("Description"),
             "x": x_n[i],
             "y": y_n[i],
-            "cluster": int(clusters[i]),
+            "cluster": int(clabels[i]),
         })
 
-    if args.plot:
+    if plot:
         plot_clusters(out)
-    elif args.save_json:
-        with open(args.save_json, 'w', encoding='utf-8') as f:
+    elif output_json:
+        with open(output_json, 'w', encoding='utf-8') as f:
             json.dump(out, f, default=np_default, indent=2)
-        print(f"JSON output saved to: {args.save_json}")
+        typer.echo(f"JSON output saved to: {output_json}")
     else:
         json.dump(out, sys.stdout, default=np_default)
 
 
+@app.command("farthest")
+def cmd_select_farthest(
+    batch_size: int = typer.Option(500, help="Batch size for Chroma fetch"),
+    k: int = typer.Option(20, help="Number of items to select"),
+    seed: int = typer.Option(42, help="Random seed"),
+    json_file: str = typer.Option("data/20_seletected_projects.json","--json","-j", help="Write selected ids to this JSON file"),
+):
+    """Select k farthest (cosine) and write only ids to JSON file."""
+    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    ids, metas, embs = fetch_all_from_chroma(client, collection_name=COLLECTION_NAME, batch_size=batch_size)
+
+    if not ids:
+        typer.echo("[]")
+        raise typer.Exit()
+
+    idx = select_farthest(embs, k=k, seed=seed)
+    out_ids = [ids[i] for i in idx]
+    with open(json_file, 'w', encoding='utf-8') as f:
+        json.dump(out_ids, f, indent=2)
+    typer.echo(f"Wrote {len(out_ids)} ids to: {json_file}")
+
+
 if __name__ == "__main__":
-    main()
+    app()

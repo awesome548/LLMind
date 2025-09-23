@@ -23,6 +23,8 @@ import time
 from dataclasses import dataclass, asdict
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse, urljoin
+from dotenv import load_dotenv
+import os
 
 from tenacity import Retrying, stop_after_attempt, wait_exponential, retry_if_exception_type
 import typer
@@ -34,8 +36,7 @@ from bs4 import BeautifulSoup
 # Configuration
 # -----------------------
 
-BASE = "https://awards.mediaarchitecture.org"
-DEFAULT_LISTING_URL = "https://awards.mediaarchitecture.org/mab/projects/"
+load_dotenv()
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; MABProjectScraper/1.0; +https://example.org/)"
@@ -53,7 +54,8 @@ SAVE_HTML_SNAPSHOT = False  # set True to include raw main HTML in JSON
 class ProjectRecord:
     url: str
     Name: str
-    Description: str
+    Descriptions: str
+    Details: str
     html_main: Optional[str] = None
 
 
@@ -91,6 +93,7 @@ def fetch_html(url: str, session: requests.Session, retryer: Retrying) -> str:
                 typer.secho(f"Network error on {url}: {e}; retrying...", fg=typer.colors.YELLOW)
                 raise
 
+    return "Success"
 
 def build_retryer(max_attempts: int, initial_backoff: float, max_backoff: float) -> Retrying:
     return Retrying(
@@ -136,7 +139,7 @@ def parse_listing_for_project_urls(listing_html: str, limit: Optional[int] = Non
         m = href_re.match(href)
         if not m:
             continue
-        abs_url = urljoin(BASE, href)
+        abs_url = urljoin(os.getenv("BASE_URL"), href)
         if abs_url in seen:
             continue
         seen.add(abs_url)
@@ -162,14 +165,15 @@ def parse_project_page(url: str, html: str) -> ProjectRecord:
     titlepro = " | ".join(titles) if titles else ""
 
     # 2) Collect non-empty .col-sm-6 texts (skip empty / "None" / <a href="None">None</a>)
-    cols = []
+    cols_sm_6 = []
+    cols_sm_4 = []
     for c in soup.select(".col-sm-6"):
         parts = []
         for child in c.find_all(["p", "h5"], recursive=True):
             text = child.get_text(" ", strip=True)
             if not text or text.lower() == "none":
                 continue
-            if child.find("a") and text.lower() == "none":
+            if text.lower() == "none":
                 continue
             
                         # Remove URLs from the extracted text
@@ -178,8 +182,33 @@ def parse_project_page(url: str, html: str) -> ProjectRecord:
                 parts.append(text_no_urls)
 
         if parts:
-            cols.append(" ".join(parts))
-    col_sm_6 = " || ".join(cols)
+            cols_sm_6.append(" ".join(parts))
+    col_sm_6 = " || ".join(cols_sm_6)
+
+    for c in soup.select(".col-sm-4"):
+        parts = []
+        start = c.find("h5", class_="mediumkur", string=lambda s: s and s.strip() == "Descriptions")
+        if not start:
+            continue
+
+        for sib in start.find_next_siblings():
+            if sib.name == "h5":
+                break  # stop at the next header
+            if sib.name != "p":
+                continue  # only collect p tags
+
+            text = sib.get_text(" ", strip=True)
+            if not text or text.lower() == "none":
+                continue
+
+            # Remove URLs
+            text_no_urls = re.sub(r"http\S+|www\.\S+", "", text).strip()
+            if text_no_urls:
+                parts.append(text_no_urls)
+
+        if parts:
+            cols_sm_4.append("\n".join(parts))
+    col_sm_4 = " || ".join(cols_sm_4)
 
     html_main = None
     if SAVE_HTML_SNAPSHOT:
@@ -188,7 +217,8 @@ def parse_project_page(url: str, html: str) -> ProjectRecord:
     return ProjectRecord(
         url=url,
         Name=titlepro,
-        Description=col_sm_6,
+        Descriptions=col_sm_6,
+        Details=col_sm_4,
         html_main=html_main,
     )
 
@@ -210,12 +240,6 @@ app = typer.Typer(add_completion=False)
 
 @app.command("scrape")
 def scrape(
-    listing_url: str = typer.Option(
-        DEFAULT_LISTING_URL,
-        "--listing",
-        "-L",
-        help="Listing page URL to discover project numbers."
-    ),
     limit: Optional[int] = typer.Option(
         None,
         "--limit",
@@ -224,7 +248,7 @@ def scrape(
         help="Maximum number of project pages to scrape (in listing order). Use 0 to scrape all projects."
     ),
     json_path: str = typer.Option(
-        "mediaarchitecture_projects_selected.json",
+        "media_architecture_projects.json",
         "--out",
         "-o",
         help="Path to write JSON output."
@@ -260,7 +284,8 @@ def scrape(
     retryer = build_retryer(max_attempts=max_attempts, initial_backoff=initial_backoff, max_backoff=max_backoff)
 
     # 1) Get listing and extract project URLs
-    typer.echo(f"Fetching listing: {listing_url}")
+    listing_url = os.getenv("DEFAULT_LISTING_URL")
+    typer.echo(f"Fetching listing: {os}")
     listing_html = fetch_html(listing_url, session=session, retryer=retryer)
     project_urls = parse_listing_for_project_urls(listing_html, limit=limit)
     if not project_urls:
@@ -289,7 +314,7 @@ def scrape(
         typer.secho("No results collected; exiting without writing.", fg=typer.colors.RED)
         raise typer.Exit(code=2)
 
-    write_json(json_path, results)
+    write_json(os.getenv("DATA_DIR") + json_path, results)
     typer.secho(f"Saved JSON -> {json_path}", fg=typer.colors.GREEN)
 
 
