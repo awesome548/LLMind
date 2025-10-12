@@ -12,11 +12,11 @@ import json, os, statistics
 from pathlib import Path
 from uuid import uuid4
 from typing import List, Dict, Any
+from supabase import create_client, Client
+from openai import OpenAI
 
 from dotenv import load_dotenv
 import typer
-import chromadb
-from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
 
 # Optional plotting
 try:
@@ -32,6 +32,10 @@ CHROMA_DB_PATH = Path(str(os.getenv("CHROMA_DB_PATH")))
 PLOTS_DIR = Path(str(os.getenv("PLOTS_DIR")))
 DATA_DIR = Path(str(os.getenv("DATA_DIR")))
 ANALYSIS_DIR = Path(str(os.getenv("ANALYSIS_DIR")))
+SUPABASE_URL = str(os.getenv("SUPABASE_URL"))
+SUPABASE_KEY = str(os.getenv("SUPABASE_KEY"))
+SUPABASE_TABLE = str(os.getenv("SUPABASE_TABLE") or "media_docs")
+EMBED_MODEL = str(os.getenv("OPENAI_MODEL") or "text-embedding-3-small")
 
 INPUT_PATH = DATA_DIR / "media_architecture.json"
 OUTPUT_PATH = DATA_DIR / "cleaned_media_architecture.json"
@@ -39,10 +43,12 @@ ANALYSIS_PATH = ANALYSIS_DIR / "analysis_summary.json"
 MIN_EXAMPLES_PATH = ANALYSIS_DIR / "min_detail_examples.json"
 
 app = typer.Typer(add_completion=False, help="Analyze, clean, and embed dataset")
+sb: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+oa = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 def to_doc_text(item: Dict[str, Any]) -> str:
-    return (item.get("Details") or "").strip()
+    return (item.get("Descriptions") or "").strip()
 
 
 def extract_project_id(url: str) -> str:
@@ -51,6 +57,17 @@ def extract_project_id(url: str) -> str:
         return url.split("project/")[-1]
     # Fallback to UUID if URL doesn't match expected format
     return str(uuid4())
+
+def embed_batch(texts: List[str]) -> List[List[float]]:
+    """Return embeddings for a batch of texts."""
+    # OpenAI SDK v1 supports batching directly
+    resp = oa.embeddings.create(model=EMBED_MODEL, input=texts)
+    # Preserve order
+    return [d.embedding for d in resp.data]
+
+def chunked(seq, size):
+    for i in range(0, len(seq), size):
+        yield seq[i:i+size]
 
 
 def load_raw(path: Path = INPUT_PATH) -> List[Dict[str, Any]]:
@@ -211,6 +228,7 @@ def clean(
 @app.command()
 def embed(
     file: Path = typer.Option(OUTPUT_PATH, "--file", "-f", help="Path to cleaned JSON file"),
+    batch_size: int = typer.Option(180, help="Batch size for embedding + upsert"),
 ):
     """
     Embed cleaned data and save into Chroma(after clanning)
@@ -226,8 +244,15 @@ def embed(
 
     ids_all = [it.get("id") for it in cleaned]
     docs_all = [to_doc_text(it) for it in cleaned]
-    metas_all = [{"ID": it.get("id"),"Name": it.get("Name"), "Details": it.get("Details"), "Descriptions": it.get("Descriptions")} for it in cleaned]
+    metas_all = [{
+        "ID": it.get("id"),
+        "Name": it.get("Name"),
+        "Details": it.get("Details"),
+        "Descriptions": it.get("Descriptions"),
+        "Image": it.get("image_href"),
+    } for it in cleaned]
 
+    # Filter out empty docs
     filtered = [(i, d, m) for i, d, m in zip(ids_all, docs_all, metas_all) if isinstance(d, str) and d.strip()]
     if not filtered:
         typer.echo("No non-empty Details to embed. Nothing to upsert.")
@@ -238,17 +263,36 @@ def embed(
     if skipped:
         typer.echo(f"Skipped {skipped} item(s) with empty or invalid Description.")
 
-    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-    collection = client.get_or_create_collection(
-        name=COLLECTION_NAME,
-        embedding_function=OpenAIEmbeddingFunction(
-            api_key=os.environ["OPENAI_API_KEY"],
-            model_name=OPENAI_MODEL,
-        ),
-    )
+    total = len(documents)
+    typer.echo(f"Embedding {total} document(s) with {EMBED_MODEL} and upserting into Supabase table '{SUPABASE_TABLE}'")
 
-    collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
-    typer.echo(f'Upserted {len(ids)} items into collection "{COLLECTION_NAME}" (db: {CHROMA_DB_PATH}).')
+    upserted = 0
+    for chunk_ids, chunk_docs, chunk_meta in zip(
+        chunked(ids, batch_size),
+        chunked(documents, batch_size),
+        chunked(metadatas, batch_size),
+    ):
+        # 1) get embeddings
+        embeddings = embed_batch(chunk_docs)
+
+        # 2) shape rows for Supabase
+        rows = []
+        for _id, _doc, _meta, _emb in zip(chunk_ids, chunk_docs, chunk_meta, embeddings):
+            rows.append({
+                "id": _id,
+                "content": _doc,
+                "metadata": _meta,       # jsonb
+                "embedding": _emb,       # vector
+            })
+
+        # 3) upsert
+        # on_conflict='id' ensures idempotent reruns
+        sb.table(SUPABASE_TABLE).upsert(rows, on_conflict="id").execute()
+
+        upserted += len(rows)
+        typer.echo(f"Upserted {upserted}/{total}...")
+
+    typer.echo(f"Done. Upserted {upserted} items into '{SUPABASE_TABLE}'.")
 
 
 if __name__ == "__main__":
