@@ -6,6 +6,10 @@ data/
 chroma_db/
 MISC/
 node_modules/
+package-lock.json
+package.json
+archive/
+taxonomy/
 
 # C extensions
 *.so
