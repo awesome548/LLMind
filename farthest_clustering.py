@@ -1,7 +1,7 @@
-# Simple CLI for clustering and farthest selection on Chroma embeddings.
+# Simple CLI for clustering and farthest selection on Supabase (pgvector) embeddings.
 # Examples:
-#   python clustering.py cluster --db-path ./chroma_db --collection mab_projects --plot
-#   python clustering.py select-farthest --db-path ./chroma_db --collection mab_projects --k 20 --json-file data/cleaned_media_arch.json
+#   python clustering.py cluster --table media_docs --plot
+#   python clustering.py select-farthest --table media_docs --k 20 --json-file data/cleaned_media_arch.json
 
 from __future__ import annotations
 
@@ -15,18 +15,26 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 import numpy as np
-import chromadb
 import typer
+
+# --- Supabase client ---
+from supabase import create_client, Client
 
 load_dotenv()
 
 # Quiet noisy runtime messages during clustering:
-# - OMP: Info #276 from Intel OpenMP
-# - UMAP n_jobs override warning when a seed is set
 os.environ.setdefault("KMP_WARNINGS", "0")      # suppress Intel OpenMP info/warnings
 os.environ.setdefault("OMP_DISPLAY_ENV", "FALSE")
-CHROMA_DB_PATH = Path(str(os.getenv("CHROMA_DB_PATH")))
-COLLECTION_NAME = str(os.getenv("COLLECTION_NAME"))
+
+# Supabase env
+SUPABASE_URL = os.getenv("SUPABASE_URL") or ""
+SUPABASE_KEY = os.getenv("SUPABASE_KEY") or ""
+SUPABASE_TABLE = os.getenv("SUPABASE_TABLE") or "media_docs"
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    sys.stderr.write("WARNING: SUPABASE_URL or SUPABASE_KEY not set. Commands will fail to fetch data.\n")
+
+sb: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ---------- Helpers ----------
 def safe_imports(algo: str = "auto"):
@@ -68,7 +76,6 @@ def safe_imports(algo: str = "auto"):
         got = try_umap()
         if got:
             return got
-        # graceful fallback
         got = try_tsne() or try_pca()
         if got:
             sys.stderr.write("umap not available, falling back.\n")
@@ -120,11 +127,9 @@ def reduce_2d(
             from sklearn.decomposition import PCA
             X_in = PCA(n_components=pre_pca, random_state=random_state).fit_transform(X)
         except Exception:
-            # if PCA unavailable, just skip pre-PCA
             X_in = X
 
     if reducer_name == "umap":
-        # UMAP supports cosine directly
         reducer = Reducer(
             n_components=2,
             n_neighbors=n_neighbors,
@@ -132,7 +137,6 @@ def reduce_2d(
             metric=metric,
             random_state=random_state,
         )
-        # Suppress specific UMAP warning about forcing n_jobs=1 when random_state is set.
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore",
@@ -143,14 +147,12 @@ def reduce_2d(
             return reducer.fit_transform(X_in)
 
     if reducer_name == "tsne":
-        # sklearn TSNE has limited metric support; for cosine we unit-normalize first
         X_tsne = maybe_unit_normalize(X_in) if metric == "cosine" else X_in
         reducer = Reducer(
             n_components=2,
             perplexity=perplexity,
             random_state=random_state,
             init="pca",
-            # If your sklearn supports it, you can add: metric=("cosine" if metric=="cosine" else "euclidean")
         )
         return reducer.fit_transform(X_tsne)
 
@@ -171,11 +173,12 @@ def kmeans_labels(X2d: np.ndarray, k: int) -> List[int]:
 
 
 def np_default(o):
-    if isinstance(o, (np.floating, np.float32, np.float64)):
+    import numpy as _np
+    if isinstance(o, (_np.floating, _np.float32, _np.float64)):
         return float(o)
-    if isinstance(o, (np.integer, np.int32, np.int64)):
+    if isinstance(o, (_np.integer, _np.int32, _np.int64)):
         return int(o)
-    if isinstance(o, np.ndarray):
+    if isinstance(o, _np.ndarray):
         return o.tolist()
     raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
 
@@ -187,24 +190,47 @@ def normalize01(arr: np.ndarray) -> List[float]:
     return [float((v - lo) / (hi - lo)) for v in arr]
 
 
-def fetch_all_from_chroma(client: chromadb.PersistentClient, collection_name: str, batch_size: int = 500, where: Dict[str, Any] | None = None):
-    coll = client.get_collection(name=collection_name)
-    ids_all, metas_all, embs_all = [], [], []
+def fetch_all_from_supabase(
+    client: Client,
+    table: str,
+    *,
+    batch_size: int = 1000,
+    where: Dict[str, Any] | None = None
+) -> Tuple[List[str], List[Dict[str, Any]], List[List[float]]]:
+    """
+    Fetch all rows from Supabase table with columns: id (text), metadata (jsonb), embedding (vector).
+    Pagination uses PostgREST .range(offset, end).
+    """
+    ids_all: List[str] = []
+    metas_all: List[Dict[str, Any]] = []
+    embs_all: List[List[float]] = []
+
     offset = 0
     while True:
-        res = coll.get(limit=batch_size, offset=offset, where=where, include=["metadatas", "embeddings"])
-        got = len(res.get("ids", []))
-        if got == 0:
+        q = client.table(table).select("id, metadata, embedding")
+
+        # Minimal JSONB filter support (exact equals) if you pass where={"metadata->>Name":"foo"} etc.
+        # Keep simple—most users won't need client-side filtering here.
+        if where:
+            for key, value in where.items():
+                # naive: treat key as a column name or expression
+                q = q.eq(key, value)
+
+        resp = q.range(offset, offset + batch_size - 1).execute()
+        rows = resp.data or []
+        if not rows:
             break
-        for i, _id in enumerate(res["ids"]):
-            emb = res["embeddings"][i]
-            meta = res["metadatas"][i]
+
+        for r in rows:
+            emb = r.get("embedding")
             if emb is None:
                 continue
-            ids_all.append(_id)
-            metas_all.append(meta or {})
+            ids_all.append(r.get("id"))
+            metas_all.append(r.get("metadata") or {})
             embs_all.append(emb)
-        offset += got
+
+        offset += len(rows)
+
     return ids_all, metas_all, embs_all
 
 
@@ -222,7 +248,7 @@ def plot_clusters(out: List[Dict[str, Any]]):
     plt.figure(figsize=(8, 6))
     scatter = plt.scatter(x, y, c=c, cmap="tab10", alpha=0.7, s=50)
     plt.colorbar(scatter, label="Cluster")
-    plt.title("Chroma Embeddings Clusters")
+    plt.title("Supabase Embeddings Clusters")
     plt.xlabel("x")
     plt.ylabel("y")
     plt.show()
@@ -263,6 +289,7 @@ app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 @app.command("cluster")
 def cmd_cluster(
+    table: str = typer.Option(SUPABASE_TABLE, help="Supabase table containing id, metadata, embedding"),
     algo: str = typer.Option("auto", help="Dimensionality reducer: auto|umap|tsne|pca"),
     metric: str = typer.Option("euclidean", help="Distance metric for reducer: euclidean|cosine"),
     perplexity: float | None = typer.Option(None, help="t-SNE perplexity; auto if omitted"),
@@ -270,15 +297,14 @@ def cmd_cluster(
     min_dist: float = typer.Option(0.1, help="UMAP min_dist"),
     pre_pca: int = typer.Option(64, help="If >0, run PCA to this many dims before UMAP/t-SNE"),
     clusters: int = typer.Option(8, help="Number of KMeans clusters"),
-    batch_size: int = typer.Option(500, help="Batch size for Chroma fetch"),
+    batch_size: int = typer.Option(1000, help="Batch size for Supabase fetch"),
     random_state: int = typer.Option(42, help="Random seed"),
     plot: bool = typer.Option(False, help="Show a scatter plot instead of JSON"),
     output_json: str | None = typer.Option(None,"--output","-o",help="Save JSON output to file"),
 ):
     """Reduce to 2D, KMeans cluster, and output JSON or plot."""
-    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-    ids, metas, embs = fetch_all_from_chroma(client, collection_name=COLLECTION_NAME, batch_size=batch_size)
-    typer.secho(f"Fetched {len(ids)} items from Chroma collection '{COLLECTION_NAME}'", fg=typer.colors.GREEN)
+    ids, metas, embs = fetch_all_from_supabase(sb, table=table, batch_size=batch_size)
+    typer.secho(f"Fetched {len(ids)} items from Supabase table '{table}'", fg=typer.colors.GREEN)
 
     if not ids:
         typer.echo("[]")
@@ -314,7 +340,7 @@ def cmd_cluster(
 
     out: List[Dict[str, Any]] = []
     for i, _id in enumerate(ids):
-        meta = metas[i] or {}
+        # You can include metadata if you want—kept minimal here for plotting/JSON size.
         out.append({
             "id": _id,
             "x": x_n[i],
@@ -334,14 +360,14 @@ def cmd_cluster(
 
 @app.command("farthest")
 def cmd_select_farthest(
-    batch_size: int = typer.Option(500, help="Batch size for Chroma fetch"),
+    table: str = typer.Option(SUPABASE_TABLE, help="Supabase table containing id, metadata, embedding"),
+    batch_size: int = typer.Option(1000, help="Batch size for Supabase fetch"),
     k: int = typer.Option(20, help="Number of items to select"),
     seed: int = typer.Option(42, help="Random seed"),
-    json_file: str = typer.Option("data/20_seletected_projects.json","--json","-j", help="Write selected ids to this JSON file"),
+    json_file: str = typer.Option("data/selected_projects.json","--json","-j", help="Write selected ids to this JSON file"),
 ):
     """Select k farthest (cosine) and write only ids to JSON file."""
-    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-    ids, metas, embs = fetch_all_from_chroma(client, collection_name=COLLECTION_NAME, batch_size=batch_size)
+    ids, metas, embs = fetch_all_from_supabase(sb, table=table, batch_size=batch_size)
 
     if not ids:
         typer.echo("[]")
@@ -349,6 +375,7 @@ def cmd_select_farthest(
 
     idx = select_farthest(embs, k=k, seed=seed)
     out_ids = [ids[i] for i in idx]
+    Path(json_file).parent.mkdir(parents=True, exist_ok=True)
     with open(json_file, 'w', encoding='utf-8') as f:
         json.dump(out_ids, f, indent=2)
     typer.echo(f"Wrote {len(out_ids)} ids to: {json_file}")
