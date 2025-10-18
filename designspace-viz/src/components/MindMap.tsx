@@ -85,7 +85,12 @@ export function MindMap({
   // init jsMind once
   useEffect(() => {
     if (!active || !containerRef.current || jmRef.current) return;
-    jmRef.current = new jsMind({ container: containerRef.current, theme: 'primary', mode: 'full', editable: true, view: { draggable: true } });
+    jmRef.current = new jsMind({
+      container: 'jsmind_container',
+      theme: 'primary',
+      mode: 'full',
+      editable: true,
+    });
 
     const mindEvents = (jsMind as any)?.event_type || {};
     jmRef.current.add_event_listener((type: any, data: any) => {
@@ -102,10 +107,16 @@ export function MindMap({
   useEffect(() => {
     if (!jmRef.current || !mind) return;
     jmRef.current.show(mind);
+
+    // >>> collapse everything below first-level nodes
+    // run on next frame so DOM is ready in all browsers
+    requestAnimationFrame(() => collapseBelowFirstLevel(jmRef.current));
+
     const rootId = mind?.data?.id;
     selectedNodeIdRef.current = null;
     handleNodeSelection(rootId, true);
     scheduleStyleRefresh();
+    console.log('Mind map updated', jmRef.current.get_data('node_array'));
   }, [handleNodeSelection, mind, scheduleStyleRefresh]);
 
   useEffect(() => {
@@ -121,9 +132,6 @@ export function MindMap({
 
   return (
     <section id="mindmap-panel" className={`tab-panel ${active ? 'active' : ''}`} role="tabpanel" aria-labelledby="mindmap-tab" hidden={!active}>
-      <div className="mindmap-header">
-        <h1 className="mindmap-title">Architectural Interaction Schema</h1>
-      </div>
       <div id="jsmind_container" ref={containerRef} />
       <span className="status" id="status">{statusText}</span>
     </section>
@@ -178,3 +186,16 @@ function findNodeByTopic(jm: any, topic: string) {
 function normalizeTopic(topic: unknown) {
   return typeof topic === 'string' ? topic.trim() : '';
 }
+
+function collapseBelowFirstLevel(jm: any) {
+  const root = jm?.mind?.root;
+  if (!root) return;
+  const level1 = root.children || [];
+  level1.forEach((n: any) => {
+    // collapse this node's subtree (keeps the node itself visible)
+    if (n && n.children && n.children.length) {
+      jm.collapse_node(n);
+    }
+  });
+}
+

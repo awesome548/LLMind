@@ -55,11 +55,20 @@ export function ProjectPanel({
   return (
     <aside className="project-panel" aria-busy={isLoading}>
       <div>
-        <h2 className="panel-title">Related Projects</h2>
-        <p className="project-context">Currently viewing: {contextText}</p>
-        <p className="project-context-description">{contextDescription}</p>
+        <div className="project-context-banner" aria-live="polite">
+          <div className="project-context-heading">
+            <span className="project-context-pill">Currently viewing</span>
+          </div>
+          {contextText ? (
+            <h5 className="project-context-title">{contextText}</h5>
+          ) : null}
+          {contextDescription ? (
+            <p className="project-context-description">{contextDescription}</p>
+          ) : null}
+        </div>
       </div>
       <div className="project-list-wrapper" aria-live="polite">
+      <h2 className="panel-title">Related Projects</h2>
         {statusText ? (
           <p className="project-placeholder" role={isLoading ? 'status' : undefined}>
             {statusText}
