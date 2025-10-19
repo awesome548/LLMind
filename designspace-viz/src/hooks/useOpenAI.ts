@@ -1,7 +1,8 @@
-import { useCallback } from 'react';
+import OpenAI from 'openai';
 
 
 interface PromptConfig {
+  userPromptTemplateFile?: string;
   systemPrompt: string;
   userPromptTemplate: string;
   model?: string;
@@ -9,15 +10,26 @@ interface PromptConfig {
   maxTokens?: number;
 }
 
+
 interface TaxonomyNode {
   id: string;
   topic: string;
   parentid?: string;
-  children?: TaxonomyNode[];
+  expanded?: boolean;
+  isroot?: boolean;
+  direction?: string;
+  description?: string;
 }
 
-interface MindMapData {
-  data: TaxonomyNode;
+interface TaxonomyResponse {
+  parent_id: string;
+  options: { [key: string]: string };
+}
+
+interface AddNodeResponse {
+  node_id: string;
+  topic: string;
+  parent_node: string;
 }
 
 /**
@@ -28,20 +40,20 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
   /**
    * Extract taxonomy from jsMind instance
    */
-  const getTaxonomy = useCallback(() => {
+  const getTaxonomy = () => {
     if (!jmRef.current) {
       console.error('jsMind instance not initialized');
       return null;
     }
     
     try {
-      const mindData = jmRef.current.get_data('node_array').data;
+      const mindData = jmRef.current.get_data('node_array');
       return mindData;
     } catch (error) {
       console.error('Error extracting taxonomy:', error);
       return null;
     }
-  }, [jmRef]);
+  };
 
   /**
    * Load prompt configuration from JSON file
@@ -53,6 +65,12 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
         throw new Error(`Failed to load prompt config: ${response.statusText}`);
       }
       const config: PromptConfig = await response.json();
+      if (config.userPromptTemplateFile) {
+        const userResponse = await fetch(config.userPromptTemplateFile);
+        if (userResponse.ok) {
+          config.userPromptTemplate = await userResponse.text();
+        }
+      }
       return config;
     } catch (error) {
       console.error('Error loading prompt config:', error);
@@ -61,39 +79,119 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
   };
 
   /**
-   * Format taxonomy as a readable string for the prompt
+   * Extract JSON from markdown code block
    */
-  const formatTaxonomy = useCallback((data: MindMapData): string => {
-    const formatNode = (node: TaxonomyNode, indent: number = 0): string => {
-      const prefix = '  '.repeat(indent);
-      let result = `${prefix}- ${node.topic}\n`;
+  const extractJsonFromMarkdown = (text: string): TaxonomyResponse | null => {
+    try {
+      // Match content between ```json and ```
+      const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
       
-      if (node.children && node.children.length > 0) {
-        node.children.forEach(child => {
-          result += formatNode(child, indent + 1);
-        });
+      if (!jsonMatch || !jsonMatch[1]) {
+        console.error('No JSON code block found in response');
+        return null;
       }
       
+      const jsonString = jsonMatch[1].trim();
+      const parsed: TaxonomyResponse = JSON.parse(jsonString);
+      
+      return parsed;
+    } catch (error) {
+      console.error('Error extracting JSON from markdown:', error);
+      return null;
+    }
+  };
+
+  /**
+   * Convert the parsed JSON to a flat array format
+   */
+  const convertToNodeArray = (jsonData: TaxonomyResponse): AddNodeResponse[] | null => {
+    try {
+      const parentId = jsonData.parent_id;
+      const options = jsonData.options;
+      
+      if (!parentId || !options || typeof options !== 'object') {
+        console.error('Invalid JSON structure: missing parent_id or options');
+        return null;
+      }
+      
+      const nodes: AddNodeResponse[] = [];
+      
+      // Convert options object to array of nodes
+      Object.entries(options).forEach(([id, topic]) => {
+        nodes.push({
+            node_id: id,
+            topic: topic as string,
+            parent_node: parentId
+        });
+      });
+      
+      return nodes;
+    } catch (error) {
+      console.error('Error converting to node array:', error);
+      return null;
+    }
+  };
+
+  /**
+   * Format taxonomy as a readable string for the prompt
+   * Takes flat array from get_data().data and extracts only id and topic
+   */
+  const formatTaxonomy = (nodes: TaxonomyNode[]): string => {
+    if (!Array.isArray(nodes) || nodes.length === 0) {
+      return '';
+    }
+
+    // Create a map for quick parent lookup
+    const nodeMap = new Map<string, TaxonomyNode>();
+    nodes.forEach(node => nodeMap.set(node.id, node));
+
+    // Find root node
+    const root = nodes.find(node => node.isroot === true);
+    if (!root) {
+      console.error('No root node found');
+      return '';
+    }
+
+    // Build hierarchy recursively
+    const formatNode = (nodeId: string, indent: number = 0): string => {
+      const node = nodeMap.get(nodeId);
+      if (!node) return '';
+
+      const prefix = '  '.repeat(indent);
+      let result = `${prefix}- ${node.topic} (${node.id})\n`;
+
+      // Find children (nodes whose parentid matches this node's id)
+      const children = nodes.filter(n => n.parentid === nodeId);
+      children.forEach(child => {
+        result += formatNode(child.id, indent + 1);
+      });
+
       return result;
     };
 
-    return formatNode(data.data);
-  }, []);
+    return formatNode(root.id);
+  };
 
   /**
    * Call OpenAI API with taxonomy data
    */
-  const callOpenAI = useCallback(async (
+  const callOpenAI = async (
     apiKey: string,
-    configPath: string = '/prompts/taxonomy-config.json'
-  ): Promise<string | null> => {
+    configPath: string = '/prompts/system_prompt.json'
+  ): Promise<AddNodeResponse[] | null> => {
     // Get current taxonomy
     const taxonomy = getTaxonomy();
     if (!taxonomy) {
       console.error('Failed to extract taxonomy');
       return null;
     }
-    console.log('Extracted taxonomy:', taxonomy);
+
+    // Extract the data array from the taxonomy object
+    const taxonomyData = taxonomy.data || taxonomy;
+    if (!Array.isArray(taxonomyData)) {
+      console.error('Taxonomy data is not an array');
+      return null;
+    }
 
     // Load prompt configuration
     const config = await loadPromptConfig(configPath);
@@ -103,7 +201,7 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
     }
 
     // Format taxonomy for prompt
-    const formattedTaxonomy = formatTaxonomy(taxonomy);
+    const formattedTaxonomy = formatTaxonomy(taxonomyData);
     
     // Replace placeholder in user prompt template
     const userPrompt = config.userPromptTemplate.replace(
@@ -111,53 +209,58 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
       formattedTaxonomy
     );
 
-    // Prepare API request
-    const requestBody = {
-      model: config.model || 'gpt-4',
-      messages: [
-        {
-          role: 'system',
-          content: config.systemPrompt
-        },
-        {
-          role: 'user',
-          content: userPrompt
-        }
-      ],
-      temperature: config.temperature ?? 0.7,
-      max_tokens: config.maxTokens ?? 2000
-    };
+    const openai = new OpenAI({apiKey: apiKey, dangerouslyAllowBrowser: true});
+    console.info('Calling OpenAI with formatted taxonomy');
 
     try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify(requestBody)
+      const completion = await openai.chat.completions.create({
+        model: config.model || 'gpt-4',
+        messages: [
+          {
+            role: 'system',
+            content: config.systemPrompt
+          },
+          {
+            role: 'user',
+            content: userPrompt
+          }
+        ],
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`OpenAI API error: ${errorData.error?.message || response.statusText}`);
-      }
 
-      const data = await response.json();
-      const result = data.choices?.[0]?.message?.content;
+      const result = completion.choices?.[0]?.message?.content;
       
       if (!result) {
         throw new Error('No content in OpenAI response');
       }
 
       console.log('OpenAI response received successfully');
-      return result;
+      console.log('Usage:', completion.usage);
+      console.log('Raw response:', result);
+      
+      // Extract JSON from markdown code block
+      const extractedJson = extractJsonFromMarkdown(result);
+      if (!extractedJson) {
+        console.error('Failed to extract JSON from response');
+        return null;
+      }
+      
+      // Convert to node array format
+      const nodeArray = convertToNodeArray(extractedJson);
+      if (!nodeArray) {
+        console.error('Failed to convert to node array');
+        return null;
+      }
+      
+      console.log('Parsed node array:', nodeArray);
+      return nodeArray;
+
       
     } catch (error) {
       console.error('Error calling OpenAI:', error);
       return null;
     }
-  }, [getTaxonomy, formatTaxonomy]);
+  };
 
   return {
     getTaxonomy,

@@ -1,0 +1,20 @@
+TASK:
+Explore into the given Aspect/Option in the current Taxonomy, suggest new Options that:
+- define the range of possible paths through the design space.
+- serve both as enablers of creative thinking (by outlining possibilities) and constraints (by ruling out alternatives when one option is chosen)
+
+EXPLORE:
+
+TAXONOMY:
+{{TAXONOMY}}
+
+Respond in the following format
+THOUGHT:
+<THOUGHT>
+
+NEW IDEA JSON:
+```json
+<JSON>
+```
+In <JSON> provide ID of the parent node that you're trying to add options to. create new Node ids accordingly, and Options 
+at the root, there are the "parent_id" with id and "options" with list for each new node id (str): a new option (str)

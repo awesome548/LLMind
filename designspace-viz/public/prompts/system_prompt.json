@@ -1,0 +1,5 @@
+{
+  "systemPrompt": "You're a creative professional designer.",
+  "userPromptTemplateFile": "/prompts/user_prompt.txt",
+  "model": "gpt-5-mini-2025-08-07"
+}
