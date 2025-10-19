@@ -443,7 +443,7 @@ def openai_generate(
     source: str = _common_options()["source"],
     dev_mode: bool = _common_options()["dev_mode"],
     model_name: str = typer.Option(
-        "gpt-4o-mini",
+        "gpt-5-mini-2025-08-07",
         help="OpenAI model to use (e.g., gpt-4o, gpt-4o-mini, gpt-4.1, o3-mini)."
     ),
 ):
