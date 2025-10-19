@@ -140,7 +140,7 @@ export function MindMap({
     });
   }, [active, scheduleStyleRefresh, jmRef]);
 
-  const { callOpenAI } = useOpenAITaxonomy();
+  const { callOpenAI } = useOpenAITaxonomy( jmRef );
   
   const handleAnalyzeTaxonomy = async () => {
     const hasEnv = Boolean(import.meta.env.VITE_OPENAI_API_KEY);
