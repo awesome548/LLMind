@@ -1,4 +1,4 @@
-import type { SchemaDoc } from '../utils/type';
+import type { SchemaDoc } from '../types/taxonomy';
 
 export function SchemaTable({ active, schema, statusText }: { active: boolean; schema: SchemaDoc | null; statusText: string; }) {
   const taxonomy = Array.isArray(schema?.Taxonomy) ? schema!.Taxonomy! : [];

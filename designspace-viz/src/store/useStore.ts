@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { supabase } from '../hooks/supabaseClient';
 import OpenAI from 'openai';
-import type { SchemaDoc, ProjectDetails } from '../utils/type';
-import { DEFAULT_TOPIC } from '../utils/type';
+import type { SchemaDoc, ProjectDetails } from '../types/taxonomy';
+import { DEFAULT_TOPIC } from '../types/taxonomy';
 
 interface AppState {
   // Schema state

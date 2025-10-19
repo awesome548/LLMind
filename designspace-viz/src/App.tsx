@@ -5,7 +5,7 @@ import { MindMap } from './components/MindMap';
 import { SchemaTable } from './components/SchemaTable';
 import { ProjectPanel } from './components/ProjectPanel';
 import { useStore } from './store/useStore';
-import { DEFAULT_TOPIC } from './utils/type';
+import { DEFAULT_TOPIC } from './types/taxonomy';
 
 export default function App() {
   // Select state from store

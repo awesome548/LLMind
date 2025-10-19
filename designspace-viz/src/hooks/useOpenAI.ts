@@ -1,36 +1,5 @@
 import OpenAI from 'openai';
-
-
-interface PromptConfig {
-  userPromptTemplateFile?: string;
-  systemPrompt: string;
-  userPromptTemplate: string;
-  model?: string;
-  temperature?: number;
-  maxTokens?: number;
-}
-
-
-interface TaxonomyNode {
-  id: string;
-  topic: string;
-  parentid?: string;
-  expanded?: boolean;
-  isroot?: boolean;
-  direction?: string;
-  description?: string;
-}
-
-interface TaxonomyResponse {
-  parent_id: string;
-  options: { [key: string]: string };
-}
-
-interface AddNodeResponse {
-  node_id: string;
-  topic: string;
-  parent_node: string;
-}
+import type { PromptConfig, TaxonomyNode, TaxonomyResponse, AddNodeResponse } from '../types/chatCompletion';
 
 /**
  * Hook to interact with OpenAI using the current mind map taxonomy

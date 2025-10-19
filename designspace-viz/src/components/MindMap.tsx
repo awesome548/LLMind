@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import jsMind from 'jsmind';
-import { DEFAULT_TOPIC } from '../utils/type';
+import { DEFAULT_TOPIC } from '../types/taxonomy';
 import { useOpenAITaxonomy } from '../hooks/useOpenAI';
 import { useStore } from '../store/useStore';
-import { FaStar } from "react-icons/fa6";
+import { FaStar, FaRegCircleXmark, FaPlus, FaCheck } from "react-icons/fa6";
+import type { AddNodeResponse } from '../types/chatCompletion';
 
 const palette = [
   { background: '#4a63ff', color: '#ffffff', size: 20, weight: '600', style: 'normal' },
@@ -29,6 +30,13 @@ export function MindMap({
   const jmRef = useRef<any>(null);
   const stylingScheduled = useRef(false);
   const selectedNodeIdRef = useRef<string | null>(null);
+  
+  const [isLoading, setIsLoading] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [suggestedNodes, setSuggestedNodes] = useState<AddNodeResponse[]>([]);
+  const [selectedSuggestions, setSelectedSuggestions] = useState<Set<string>>(new Set());
+  const modalTitleId = 'mindmap-modal-title';
+  const modalDescriptionId = 'mindmap-modal-description';
   
   // Get setJmRef from store to sync
   const setJmRef = useStore(state => state.setJmRef);
@@ -148,12 +156,81 @@ export function MindMap({
       console.error('OpenAI API key not configured in environment variables.');
       return;
     }
+    
+    setIsLoading(true);
     const apiKey = import.meta.env.VITE_OPENAI_API_KEY as string;
-    const result = await callOpenAI(apiKey);
-    if (result) {
-      console.log('OpenAI Analysis:', result);
+    
+    try {
+      const result = await callOpenAI(apiKey);
+      if (result && Array.isArray(result)) {
+        console.log('OpenAI Analysis:', result);
+        setSuggestedNodes(result);
+        setSelectedSuggestions(new Set());
+        setShowModal(true);
+      }
+    } catch (error) {
+      console.error('Error analyzing taxonomy:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
+
+  const toggleSuggestionSelection = (nodeId: string) => {
+    setSelectedSuggestions(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(nodeId)) {
+        newSet.delete(nodeId);
+      } else {
+        newSet.add(nodeId);
+      }
+      return newSet;
+    });
+  };
+
+  const addSelectedNodesToMindMap = () => {
+    if (!jmRef.current) return;
+    
+    suggestedNodes.forEach(node => {
+      if (selectedSuggestions.has(node.node_id)) {
+        // Check if parent node exists
+        const parentNode = jmRef.current.get_node(node.parent_node);
+        if (parentNode) {
+          // Add the node to the mind map
+          jmRef.current.add_node(
+            node.parent_node,
+            node.node_id,
+            node.topic,
+            {},
+            undefined // direction - let jsMind decide based on layout
+          );
+        } else {
+          console.warn(`Parent node ${node.parent_node} not found for ${node.node_id}`);
+        }
+      }
+    });
+    
+    // Refresh styling after adding nodes
+    scheduleStyleRefresh();
+    
+    // Close modal and reset selections
+    setShowModal(false);
+    setSelectedSuggestions(new Set());
+    setSuggestedNodes([]);
+  };
+
+  useEffect(() => {
+    if (!showModal) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setShowModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showModal]);
 
   return (
     <section id="mindmap-panel" className={`tab-panel ${active ? 'active' : ''}`} role="tabpanel" aria-labelledby="mindmap-tab" hidden={!active}>
@@ -172,11 +249,25 @@ export function MindMap({
             {contextText && (
             <button
               type="button"
-              className="mindmap-explore-button"
+              className={`mindmap-explore-button ${isLoading ? 'mindmap-explore-button--loading' : ''}`}
               onClick={handleAnalyzeTaxonomy}
+              disabled={isLoading}
             >
-              <FaStar />
-              Explore
+              {isLoading ? (
+                <>
+                  <span className="spinner" aria-hidden="true" />
+                  <span className="mindmap-explore-label">Analyzing</span>
+                </>
+              ) : (
+                <>
+                  <span className="mindmap-explore-icon" aria-hidden="true">
+                    <FaStar />
+                  </span>
+                  <span className="mindmap-explore-text">
+                    Explore with AI
+                  </span>
+                </>
+              )}
             </button>
             )}
           </div>
@@ -184,6 +275,91 @@ export function MindMap({
       </div>
       <div id="jsmind_container" ref={containerRef} />
       <span className="status" id="status">{statusText}</span>
+
+      {/* Modal for suggested nodes */}
+      {showModal && (
+        <div
+          className="mindmap-modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={modalTitleId}
+          aria-describedby={modalDescriptionId}
+          onClick={() => setShowModal(false)}
+        >
+          <div
+            className="mindmap-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mindmap-modal-header">
+              <div className="mindmap-modal-heading">
+                <span className="mindmap-modal-kicker">AI suggestions</span>
+                <h3 className="mindmap-modal-title" id={modalTitleId}>
+                  Enrich your mind map
+                </h3>
+                <p className="mindmap-modal-description" id={modalDescriptionId}>
+                  Select the topics you would like to add. We will attach them to their recommended parent nodes.
+                </p>
+              </div>
+              <button
+                className="mindmap-modal-close"
+                onClick={() => setShowModal(false)}
+                aria-label="Close modal"
+              >
+                <FaRegCircleXmark />
+              </button>
+            </div>
+            
+            <div className="mindmap-modal-body">
+              <div className="mindmap-suggestions-grid">
+                {suggestedNodes.map((node) => (
+                  <button
+                    key={node.node_id}
+                    type="button"
+                    className={`mindmap-suggestion-card ${selectedSuggestions.has(node.node_id) ? 'is-selected' : ''}`}
+                    onClick={() => toggleSuggestionSelection(node.node_id)}
+                    aria-pressed={selectedSuggestions.has(node.node_id)}
+                    aria-label={`Toggle ${node.topic} under ${node.parent_node}`}
+                  >
+                    <div className="mindmap-suggestion-card-content">
+                      <div className="mindmap-suggestion-checkbox" aria-hidden="true">
+                        {selectedSuggestions.has(node.node_id) ? (
+                          <FaCheck className="check-icon" />
+                        ) : (
+                          <FaPlus className="plus-icon" />
+                        )}
+                      </div>
+                      <div className="mindmap-suggestion-text">
+                        <p className="mindmap-suggestion-topic">{node.topic}</p>
+                        <span className="mindmap-suggestion-parent">
+                          Parent: <strong>{node.parent_node}</strong>
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mindmap-modal-footer">
+              <button
+                type="button"
+                className="mindmap-modal-secondary"
+                onClick={() => setShowModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="mindmap-modal-primary"
+                onClick={addSelectedNodesToMindMap}
+                disabled={selectedSuggestions.size === 0}
+              >
+                Add Selected ({selectedSuggestions.size})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
-import type { ProjectDetails } from '../utils/type';
+import type { ProjectDetails } from '../types/taxonomy';
 import { truncateText } from '../utils/text';
 
 export function ProjectPanel({
