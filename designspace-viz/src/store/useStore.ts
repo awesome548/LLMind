@@ -1,4 +1,3 @@
-// store.ts
 import { create } from 'zustand';
 import { supabase } from '../hooks/supabaseClient';
 import OpenAI from 'openai';
@@ -20,11 +19,15 @@ interface AppState {
   contextText: string;
   contextDescription: string;
   
+  // jsMind ref
+  jmRef: any | null;
+  
   // Actions
   loadSchema: () => Promise<void>;
   searchProjects: (topic: string, lineage: string[], shouldQuerySupabase?: boolean) => Promise<void>;
   setActiveTab: (tab: 'mindmap' | 'table') => void;
   selectTopic: (topic: string, lineage: string[], userInitiated: boolean) => void;
+  setJmRef: (ref: any) => void;
 }
 
 const FALLBACK_LOADING_MESSAGE = 'Searching Supabase for related projects...';
@@ -44,6 +47,12 @@ export const useStore = create<AppState>((set, get) => ({
   activeTab: 'mindmap',
   contextText: DEFAULT_TOPIC,
   contextDescription: '',
+  jmRef: null,
+
+  // Set jmRef
+  setJmRef: (ref) => {
+    set({ jmRef: ref });
+  },
 
   // Load schema
   loadSchema: async () => {

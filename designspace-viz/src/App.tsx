@@ -4,14 +4,12 @@ import { TabBar } from './components/TabBar';
 import { MindMap } from './components/MindMap';
 import { SchemaTable } from './components/SchemaTable';
 import { ProjectPanel } from './components/ProjectPanel';
-import { useStore } from './store/store';
+import { useStore } from './store/useStore';
 import { DEFAULT_TOPIC } from './utils/type';
 
 export default function App() {
   // Select state from store
   const activeTab = useStore(state => state.activeTab);
-  const contextText = useStore(state => state.contextText);
-  const contextDescription = useStore(state => state.contextDescription);
   const schema = useStore(state => state.schema);
   const schemaStatus = useStore(state => state.schemaStatus);
   const projects = useStore(state => state.projects);
@@ -30,7 +28,6 @@ export default function App() {
 
   // Generate mind map structure
   const mind = useMemo(() => {
-    console.log('Generating mind from schema', schema);
     const taxonomy = Array.isArray(schema?.Taxonomy) ? schema.Taxonomy : [];
     return {
       meta: { name: 'Taxon Mind Map', author: 'TaxonAI', version: '1.0' },
@@ -79,8 +76,6 @@ export default function App() {
         </main>
         <ProjectPanel
           projects={projects}
-          contextText={contextText}
-          contextDescription={contextDescription}
           statusText={projectsStatusText}
           isLoading={projectsLoading}
         />

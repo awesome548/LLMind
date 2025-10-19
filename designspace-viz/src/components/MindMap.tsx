@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef } from 'react';
 import jsMind from 'jsmind';
 import { DEFAULT_TOPIC } from '../utils/type';
+import { useOpenAITaxonomy } from '../hooks/useOpenAI';
+import { useStore } from '../store/useStore';
+import { FaStar } from "react-icons/fa6";
 
 const palette = [
   { background: '#4a63ff', color: '#ffffff', size: 20, weight: '600', style: 'normal' },
@@ -26,6 +29,11 @@ export function MindMap({
   const jmRef = useRef<any>(null);
   const stylingScheduled = useRef(false);
   const selectedNodeIdRef = useRef<string | null>(null);
+  
+  // Get setJmRef from store to sync
+  const setJmRef = useStore(state => state.setJmRef);
+  const contextText = useStore(state => state.contextText);
+  const contextDescription = useStore(state => state.contextDescription);
 
   const scheduleStyleRefresh = useCallback(() => {
     if (stylingScheduled.current || !jmRef.current) return;
@@ -91,6 +99,8 @@ export function MindMap({
       mode: 'full',
       editable: true,
     });
+    // Store in Zustand
+    setJmRef(jmRef.current);
 
     const mindEvents = (jsMind as any)?.event_type || {};
     jmRef.current.add_event_listener((type: any, data: any) => {
@@ -101,7 +111,7 @@ export function MindMap({
         scheduleStyleRefresh();
       }
     });
-  }, [active, handleNodeSelection, scheduleStyleRefresh]);
+  }, [active, jmRef, setJmRef, handleNodeSelection, scheduleStyleRefresh]);
 
   // show/update mind
   useEffect(() => {
@@ -123,15 +133,55 @@ export function MindMap({
     if (!active || !jmRef.current) return;
     requestAnimationFrame(() => {
       if (selectedNodeIdRef.current) {
-        jmRef.current?.select_node(selectedNodeIdRef.current);
+        jmRef.current.select_node(selectedNodeIdRef.current);
       }
-      jmRef.current?.resize?.();
+      jmRef.current.resize?.();
       scheduleStyleRefresh();
     });
-  }, [active, scheduleStyleRefresh]);
+  }, [active, scheduleStyleRefresh, jmRef]);
+
+  const { callOpenAI } = useOpenAITaxonomy();
+  
+  const handleAnalyzeTaxonomy = async () => {
+    const hasEnv = Boolean(import.meta.env.VITE_OPENAI_API_KEY);
+    if (!hasEnv) {
+      console.error('OpenAI API key not configured in environment variables.');
+      return;
+    }
+    const apiKey = import.meta.env.VITE_OPENAI_API_KEY as string;
+    const result = await callOpenAI(apiKey);
+    if (result) {
+      console.log('OpenAI Analysis:', result);
+    }
+  };
 
   return (
     <section id="mindmap-panel" className={`tab-panel ${active ? 'active' : ''}`} role="tabpanel" aria-labelledby="mindmap-tab" hidden={!active}>
+      <div style={{ flexDirection: 'row' }}>
+        <div className="project-context-banner" aria-live="polite">
+          <div className="project-context-heading" style={{ flexDirection: 'row'}}>
+            <span className="project-context-pill">Currently viewing</span>
+            {contextText ? (
+              <h5 className="project-context-title">{contextText}</h5>
+            ) : null}
+          </div>
+          <div style={{ flexDirection: 'row'}}>
+            {contextDescription ? (
+              <p className="project-context-description">{contextDescription}</p>
+            ) : null}
+            {contextText && (
+            <button
+              type="button"
+              className="mindmap-explore-button"
+              onClick={handleAnalyzeTaxonomy}
+            >
+              <FaStar />
+              Explore
+            </button>
+            )}
+          </div>
+        </div>
+      </div>
       <div id="jsmind_container" ref={containerRef} />
       <span className="status" id="status">{statusText}</span>
     </section>
@@ -198,4 +248,3 @@ function collapseBelowFirstLevel(jm: any) {
     }
   });
 }
-
