@@ -1,73 +1,32 @@
-# React + TypeScript + Vite
+# TaxonAI Designspace Visualizer
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A React + TypeScript application that turns a taxonomy into an interactive design space explorer. The interface combines a jsMind-powered mind map, a tabular schema view, and a related projects panel that can be enriched with OpenAI suggestions and Supabase vector search.
 
-Currently, two official plugins are available:
+## To Do
+- [ ] Design Fix with project context banner
+- [ ] Add addtional round of making the output concise?
+- [ ] Add description to each option to improve the context? 
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Features
+- Mind map view with contextual styling, node selection, and AI-assisted expansion for exploring adjacent concepts.
+- Schema table view that mirrors the taxonomy JSON for quick scanning of aspects, descriptions, and options.
+- Related projects sidebar that surfaces curated or Supabase-backed media architecture precedents based on the active node lineage.
+- Prompt-driven OpenAI integration that proposes new nodes and allows selective insertion into the live mind map.
 
-## React Compiler
+## Getting Started
+1. Install dependencies: `npm install`
+2. Launch the dev server: `npm run dev`
+3. Open the app at the URL printed in the console (default `http://localhost:5173`)
+4. Build for production when ready: `npm run build`
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Available Scripts
+- `npm run dev` — start Vite in development mode with hot reloading.
+- `npm run build` — type-check and build the production bundle.
+- `npm run preview` — preview the production build locally.
+- `npm run lint` — run ESLint across the project.
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Configuration
+- Taxonomy data lives in `public/taxonomy/schema.json` and is fetched at runtime.
+- To enable AI-assisted exploration, set `VITE_OPENAI_API_KEY` (and optionally override `VITE_OPENAI_EMBED_MODEL`).
+- To turn on Supabase similarity search for projects, provide `VITE_SUPABASE_URL`, `VITE_SUPABASE_KEY`, and `VITE_SUPABASE_MATCH_FN`.
+- Prompt templates reside in `public/prompts/` and can be edited to adjust tone or output expectations.
