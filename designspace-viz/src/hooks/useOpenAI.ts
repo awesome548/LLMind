@@ -1,6 +1,16 @@
 import OpenAI from 'openai';
 import type { PromptConfig, TaxonomyNode, TaxonomyResponse, AddNodeResponse } from '../types/chatCompletion';
 
+type FocusNodeContext = {
+  id: string;
+  topic: string;
+};
+
+type CallOpenAIOptions = {
+  configPath: string;
+  focusNode: FocusNodeContext | null;
+};
+
 /**
  * Hook to interact with OpenAI using the current mind map taxonomy
  */
@@ -146,8 +156,10 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
    */
   const callOpenAI = async (
     apiKey: string,
-    configPath: string = '/prompts/system_prompt.json'
+    options: CallOpenAIOptions = {}
   ): Promise<AddNodeResponse[] | null> => {
+    const configPath = options.configPath ?? '/prompts/system_prompt.json';
+    const focusNode = options.focusNode ?? null;
     // Get current taxonomy
     const taxonomy = getTaxonomy();
     if (!taxonomy) {
@@ -172,11 +184,19 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
     // Format taxonomy for prompt
     const formattedTaxonomy = formatTaxonomy(taxonomyData);
     
+    const template = config.userPromptTemplate;
+
     // Replace placeholder in user prompt template
-    const userPrompt = config.userPromptTemplate.replace(
+    let userPrompt = template.replace(
       '{{TAXONOMY}}',
       formattedTaxonomy
     );
+
+    userPrompt = userPrompt
+      .replaceAll('{{SELECTED_NODE_TOPIC}}', focusNode.topic)
+      .replaceAll('{{SELECTED_NODE_ID}}', focusNode.id);
+
+    console.info(userPrompt)
 
     const openai = new OpenAI({apiKey: apiKey, dangerouslyAllowBrowser: true});
     console.info('Calling OpenAI with formatted taxonomy');

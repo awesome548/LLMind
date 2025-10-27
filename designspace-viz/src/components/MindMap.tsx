@@ -161,7 +161,29 @@ export function MindMap({
     const apiKey = import.meta.env.VITE_OPENAI_API_KEY as string;
     
     try {
-      const result = await callOpenAI(apiKey);
+      const jm = jmRef.current;
+      const selected =
+        (typeof jm?.get_selected_node === 'function' ? jm.get_selected_node() : null) ||
+        (selectedNodeIdRef.current && typeof jm?.get_node === 'function'
+          ? jm.get_node(selectedNodeIdRef.current)
+          : null) ||
+        jm?.mind?.root ||
+        null;
+
+      const selectedTopic =
+        normalizeTopic(selected?.topic) ||
+        DEFAULT_TOPIC;
+      const focusNode = selected
+        ? {
+            id: selected?.id != null ? String(selected.id) : 'root',
+            topic: selectedTopic,
+          }
+        : {
+            id: 'root',
+            topic: DEFAULT_TOPIC,
+          };
+
+      const result = await callOpenAI(apiKey, { focusNode });
       if (result && Array.isArray(result)) {
         console.log('OpenAI Analysis:', result);
         setSuggestedNodes(result);
@@ -236,11 +258,13 @@ export function MindMap({
     <section id="mindmap-panel" className={`tab-panel ${active ? 'active' : ''}`} role="tabpanel" aria-labelledby="mindmap-tab" hidden={!active}>
       <div style={{ flexDirection: 'row' }}>
         <div className="project-context-banner" aria-live="polite">
-          <div className="project-context-heading" style={{ flexDirection: 'row'}}>
-            <span className="project-context-pill">Currently viewing</span>
+          <div className="project-context-heading" style={{ flexDirection: 'row', alignItems: 'center' }}>
             {contextText ? (
+              <>
               <h5 className="project-context-title">{contextText}</h5>
-            ) : null}
+            <span className="project-context-pill">Currently viewing</span>
+              </>
+            ) : <p className='project-context-description'>No node selected</p>}
           </div>
           <div style={{ flexDirection: 'row'}}>
             {contextDescription ? (
@@ -330,9 +354,9 @@ export function MindMap({
                       </div>
                       <div className="mindmap-suggestion-text">
                         <p className="mindmap-suggestion-topic">{node.topic}</p>
-                        <span className="mindmap-suggestion-parent">
+                        {/* <span className="mindmap-suggestion-parent">
                           Parent: <strong>{node.parent_node}</strong>
-                        </span>
+                        </span> */}
                       </div>
                     </div>
                   </button>
