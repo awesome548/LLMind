@@ -114,7 +114,7 @@ export const useStore = create<AppState>((set, get) => ({
 
         const { data, error } = await supabase.rpc(MATCH_FN, {
           query_embedding: queryEmbedding,
-          match_count: 3,
+          match_count: 5,
           similarity_threshold: 0.0,
         });
         if (error) throw error;

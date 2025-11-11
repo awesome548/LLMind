@@ -106,6 +106,15 @@ export function MindMap({
       theme: 'primary',
       mode: 'full',
       editable: true,
+      view:{
+        draggable: true,
+      },
+      shortcut:{
+        enable: true,
+        mapping: {
+          addchild : [45, 1024+13],
+        }
+      }
     });
     // Store in Zustand
     setJmRef(jmRef.current);

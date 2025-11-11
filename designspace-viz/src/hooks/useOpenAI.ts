@@ -1,5 +1,7 @@
 import OpenAI from 'openai';
+import { supabase } from './supabaseClient';
 import type { PromptConfig, TaxonomyNode, TaxonomyResponse, AddNodeResponse } from '../types/chatCompletion';
+import type { ProjectDetails } from '../types/taxonomy';
 
 type FocusNodeContext = {
   id: string;
@@ -151,6 +153,92 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
     return formatNode(root.id);
   };
 
+  const fetchRelatedProjects = async (
+    openaiClient: OpenAI,
+    topic?: string
+  ): Promise<ProjectDetails[]> => {
+    const trimmedTopic = topic?.trim();
+    if (!trimmedTopic) {
+      return [];
+    }
+
+    const hasSupabaseEnv =
+      Boolean(import.meta.env.VITE_SUPABASE_URL) &&
+      Boolean(import.meta.env.VITE_SUPABASE_KEY);
+    if (!hasSupabaseEnv) {
+      console.warn('Supabase environment variables are missing; skipping related project lookup.');
+      return [];
+    }
+
+    const embeddingModel =
+      (import.meta.env.VITE_OPENAI_EMBED_MODEL as string) || 'text-embedding-3-small';
+    const matchFn =
+      (import.meta.env.VITE_SUPABASE_MATCH_FN as string) || 'match_media_docs';
+
+    try {
+      const embeddingResponse = await openaiClient.embeddings.create({
+        model: embeddingModel,
+        input: [trimmedTopic],
+      });
+      const queryEmbedding = embeddingResponse.data?.[0]?.embedding;
+      if (!Array.isArray(queryEmbedding)) {
+        console.warn('Failed to generate embedding for related project lookup.');
+        return [];
+      }
+
+      const { data, error } = await supabase.rpc(matchFn, {
+        query_embedding: queryEmbedding,
+        match_count: 5,
+        similarity_threshold: 0.0,
+      });
+
+      if (error) {
+        console.warn('Supabase RPC failed for related project lookup:', error);
+        return [];
+      }
+
+      const rows = Array.isArray(data) ? data.slice(0, 5) : [];
+
+      return rows
+        .map((row: any) => {
+          const metadata = row?.metadata ?? {};
+          const rawImage = metadata.Image ?? null;
+          const derivedId = metadata.id ?? row?.id ?? metadata.Id ?? row?.Id;
+          return {
+            id: typeof derivedId === 'string' ? derivedId : undefined,
+            Id: metadata.Id ?? undefined,
+            Name: metadata.Name ?? '(untitled)',
+            Descriptions: metadata.Descriptions ?? '',
+            Details: metadata.Details ?? row?.content ?? '',
+            Image: typeof rawImage === 'string' && rawImage.trim() ? rawImage.trim() : undefined,
+          } as ProjectDetails;
+        })
+        .filter(Boolean);
+    } catch (error) {
+      console.warn('Failed to fetch related projects from Supabase:', error);
+      return [];
+    }
+  };
+
+  const formatProjectsForPrompt = (projects: ProjectDetails[]): string => {
+    if (!projects.length) {
+      return 'No related projects found.';
+    }
+
+    return projects
+      .map((project, index) => {
+        const idPart = project.id ?? project.Id;
+        const description =
+          (project.Descriptions && project.Descriptions.trim()) ||
+          (project.Details && project.Details.trim()) ||
+          '';
+        const descriptionLine = description ? `\n  Description: ${description}` : '';
+        const idLine = idPart ? `\n  ID: ${idPart}` : '';
+        return `${index + 1}. ${project.Name}${idLine}${descriptionLine}`;
+      })
+      .join('\n\n');
+  };
+
   /**
    * Call OpenAI API with taxonomy data
    */
@@ -160,6 +248,10 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
   ): Promise<AddNodeResponse[] | null> => {
     const configPath = options.configPath ?? '/prompts/system_prompt.json';
     const focusNode = options.focusNode ?? null;
+    if (!focusNode) {
+      console.error('Focus node context is required to call OpenAI.');
+      return null;
+    }
     // Get current taxonomy
     const taxonomy = getTaxonomy();
     if (!taxonomy) {
@@ -184,6 +276,10 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
     // Format taxonomy for prompt
     const formattedTaxonomy = formatTaxonomy(taxonomyData);
     
+    const openai = new OpenAI({apiKey: apiKey, dangerouslyAllowBrowser: true});
+    const relatedProjects = await fetchRelatedProjects(openai, focusNode.topic);
+    const relatedProjectsSection = formatProjectsForPrompt(relatedProjects);
+
     const template = config.userPromptTemplate;
 
     // Replace placeholder in user prompt template
@@ -194,11 +290,11 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
 
     userPrompt = userPrompt
       .replaceAll('{{SELECTED_NODE_TOPIC}}', focusNode.topic)
-      .replaceAll('{{SELECTED_NODE_ID}}', focusNode.id);
+      .replaceAll('{{SELECTED_NODE_ID}}', focusNode.id)
+      .replace('{{RELATED_PROJECTS}}', relatedProjectsSection);
 
     console.info(userPrompt)
 
-    const openai = new OpenAI({apiKey: apiKey, dangerouslyAllowBrowser: true});
     console.info('Calling OpenAI with formatted taxonomy');
 
     try {

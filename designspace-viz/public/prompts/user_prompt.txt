@@ -1,11 +1,14 @@
 TASK:
-Explore into the given Aspect in the current Taxonomy, suggest new Options that:
+Explore into the given Aspect in the current Taxonomy, suggest new simple Options that:
 - define the range of possible paths through the design space.
 - serve both as enablers of creative thinking (by outlining possibilities) and constraints (by ruling out alternatives when one option is chosen)
 
 ASPECT TO EXPLORE:
 ID: {{SELECTED_NODE_ID}}
 Topic: {{SELECTED_NODE_TOPIC}}
+
+RELATED PROJECTS:
+{{RELATED_PROJECTS}}
 
 TAXONOMY:
 {{TAXONOMY}}
