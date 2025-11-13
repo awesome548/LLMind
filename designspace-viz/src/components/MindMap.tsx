@@ -31,6 +31,7 @@ export function MindMap({
   const jmRef = useRef<any>(null);
   const stylingScheduled = useRef(false);
   const selectedNodeIdRef = useRef<string | null>(null);
+  const previousActiveRef = useRef(active);
   
   const [isLoading, setIsLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -131,21 +132,34 @@ export function MindMap({
     });
   }, [active, jmRef, setJmRef, handleNodeSelection, scheduleStyleRefresh]);
 
+  const renderMind = useCallback(
+    (options?: { preserveSelection?: boolean }) => {
+      if (!jmRef.current || !mind) return;
+
+      const preserveSelection = Boolean(options?.preserveSelection);
+      const previousSelection = preserveSelection ? selectedNodeIdRef.current : null;
+
+      jmRef.current.show(mind);
+
+      // Collapse everything below first-level nodes once DOM is ready
+      requestAnimationFrame(() => collapseBelowFirstLevel(jmRef.current));
+
+      const targetNode = previousSelection || mind?.data?.id;
+      if (targetNode) {
+        handleNodeSelection(targetNode, !preserveSelection);
+      }
+
+      jmRef.current.resize?.();
+      scheduleStyleRefresh();
+      console.log('Mind map updated', jmRef.current.get_data('node_array'));
+    },
+    [handleNodeSelection, mind, scheduleStyleRefresh]
+  );
+
   // show/update mind
   useEffect(() => {
-    if (!jmRef.current || !mind) return;
-    jmRef.current.show(mind);
-
-    // >>> collapse everything below first-level nodes
-    // run on next frame so DOM is ready in all browsers
-    requestAnimationFrame(() => collapseBelowFirstLevel(jmRef.current));
-
-    const rootId = mind?.data?.id;
-    selectedNodeIdRef.current = null;
-    handleNodeSelection(rootId, true);
-    scheduleStyleRefresh();
-    console.log('Mind map updated', jmRef.current.get_data('node_array'));
-  }, [handleNodeSelection, mind, scheduleStyleRefresh]);
+    renderMind();
+  }, [renderMind]);
 
   useEffect(() => {
     if (!active || !jmRef.current) return;
@@ -157,6 +171,13 @@ export function MindMap({
       scheduleStyleRefresh();
     });
   }, [active, scheduleStyleRefresh, jmRef]);
+
+  useEffect(() => {
+    if (previousActiveRef.current === active) return;
+    previousActiveRef.current = active;
+    if (!active) return;
+    renderMind({ preserveSelection: true });
+  }, [active, renderMind]);
 
   const { callOpenAI } = useOpenAITaxonomy( jmRef );
   
