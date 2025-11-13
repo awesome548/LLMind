@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { supabase } from './supabaseClient';
 import type { PromptConfig, TaxonomyNode, TaxonomyResponse, AddNodeResponse } from '../types/chatCompletion';
 import type { ProjectDetails } from '../types/taxonomy';
+import { useProjectStore } from '../store/projectStore';
 
 type FocusNodeContext = {
   id: string;
@@ -227,16 +228,35 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
 
     return projects
       .map((project, index) => {
-        const idPart = project.id ?? project.Id;
         const description =
           (project.Descriptions && project.Descriptions.trim()) ||
           (project.Details && project.Details.trim()) ||
           '';
         const descriptionLine = description ? `\n  Description: ${description}` : '';
-        const idLine = idPart ? `\n  ID: ${idPart}` : '';
-        return `${index + 1}. ${project.Name}${idLine}${descriptionLine}`;
+        return `${index + 1}. ${project.Name}${descriptionLine}`;
       })
       .join('\n\n');
+  };
+
+  const hasMeaningfulProjectData = (projects: ProjectDetails[]): boolean => {
+    return projects.some(project => {
+      const name = project.Name?.trim();
+      const description = project.Descriptions?.trim();
+      const details = project.Details?.trim();
+      const isPlaceholder = name?.toLowerCase() === 'relevant projects will appear here';
+      return Boolean((name && !isPlaceholder) || description || details);
+    });
+  };
+
+  const getProjectsForPrompt = async (
+    openaiClient: OpenAI,
+    topic?: string
+  ): Promise<ProjectDetails[]> => {
+    const storedProjects = useProjectStore.getState().projects ?? [];
+    if (hasMeaningfulProjectData(storedProjects)) {
+      return storedProjects.slice(0, 5);
+    }
+    return fetchRelatedProjects(openaiClient, topic);
   };
 
   /**
@@ -277,7 +297,7 @@ export function useOpenAITaxonomy(jmRef: React.RefObject<any>) {
     const formattedTaxonomy = formatTaxonomy(taxonomyData);
     
     const openai = new OpenAI({apiKey: apiKey, dangerouslyAllowBrowser: true});
-    const relatedProjects = await fetchRelatedProjects(openai, focusNode.topic);
+    const relatedProjects = await getProjectsForPrompt(openai, focusNode.topic);
     const relatedProjectsSection = formatProjectsForPrompt(relatedProjects);
 
     const template = config.userPromptTemplate;

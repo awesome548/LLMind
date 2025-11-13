@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import jsMind from 'jsmind';
 import { DEFAULT_TOPIC } from '../types/taxonomy';
 import { useOpenAITaxonomy } from '../hooks/useOpenAI';
-import { useStore } from '../store/useStore';
+import { useAppStore } from '../store/appStore';
+import { useMindMapStore } from '../store/mindMapStore';
 import { FaStar, FaRegCircleXmark, FaPlus, FaCheck } from "react-icons/fa6";
 import type { AddNodeResponse } from '../types/chatCompletion';
 
@@ -39,9 +40,9 @@ export function MindMap({
   const modalDescriptionId = 'mindmap-modal-description';
   
   // Get setJmRef from store to sync
-  const setJmRef = useStore(state => state.setJmRef);
-  const contextText = useStore(state => state.contextText);
-  const contextDescription = useStore(state => state.contextDescription);
+  const setJmRef = useMindMapStore(state => state.setJmRef);
+  const contextText = useAppStore(state => state.contextText);
+  const contextDescription = useAppStore(state => state.contextDescription);
 
   const scheduleStyleRefresh = useCallback(() => {
     if (stylingScheduled.current || !jmRef.current) return;

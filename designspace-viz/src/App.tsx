@@ -4,22 +4,24 @@ import { TabBar } from './components/TabBar';
 import { MindMap } from './components/MindMap';
 import { SchemaTable } from './components/SchemaTable';
 import { ProjectPanel } from './components/ProjectPanel';
-import { useStore } from './store/useStore';
+import { useAppStore } from './store/appStore';
+import { useSchemaStore } from './store/schemaStore';
+import { useProjectStore } from './store/projectStore';
 import { DEFAULT_TOPIC } from './types/taxonomy';
 
 export default function App() {
   // Select state from store
-  const activeTab = useStore(state => state.activeTab);
-  const schema = useStore(state => state.schema);
-  const schemaStatus = useStore(state => state.schemaStatus);
-  const projects = useStore(state => state.projects);
-  const projectsLoading = useStore(state => state.projectsLoading);
-  const projectsStatusText = useStore(state => state.projectsStatusText);
+  const activeTab = useAppStore(state => state.activeTab);
+  const schema = useSchemaStore(state => state.schema);
+  const schemaStatus = useSchemaStore(state => state.schemaStatus);
+  const projects = useProjectStore(state => state.projects);
+  const projectsLoading = useProjectStore(state => state.projectsLoading);
+  const projectsStatusText = useProjectStore(state => state.projectsStatusText);
   
   // Select actions from store
-  const setActiveTab = useStore(state => state.setActiveTab);
-  const selectTopic = useStore(state => state.selectTopic);
-  const loadSchema = useStore(state => state.loadSchema);
+  const setActiveTab = useAppStore(state => state.setActiveTab);
+  const selectTopic = useAppStore(state => state.selectTopic);
+  const loadSchema = useSchemaStore(state => state.loadSchema);
 
   // Load schema on mount
   useEffect(() => {
