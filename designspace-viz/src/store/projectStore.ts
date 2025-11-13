@@ -3,9 +3,6 @@ import { supabase } from '../hooks/supabaseClient';
 import OpenAI from 'openai';
 import type { ProjectDetails } from '../types/taxonomy';
 
-const FALLBACK_LOADING_MESSAGE = 'Searching Supabase for related projects...';
-const FALLBACK_EMPTY_MESSAGE = 'No related projects found for this selection yet.';
-
 const curatedFallbackProjects: ProjectDetails[] = [
   { Name: 'Relevant projects will appear here', Descriptions: '', Details: '' },
 ];
@@ -13,7 +10,6 @@ const curatedFallbackProjects: ProjectDetails[] = [
 interface ProjectState {
   projects: ProjectDetails[];
   projectsLoading: boolean;
-  projectsStatusText: string;
   searchProjects: (
     topic: string,
     lineage: string[],
@@ -25,22 +21,18 @@ interface ProjectState {
 export const useProjectStore = create<ProjectState>((set) => ({
   projects: curatedFallbackProjects,
   projectsLoading: false,
-  projectsStatusText: '',
 
   searchProjects: async (topic, lineage, shouldQuerySupabase = false, description) => {
     if (!shouldQuerySupabase) {
       set({
         projects: curatedFallbackProjects,
         projectsLoading: false,
-        projectsStatusText: FALLBACK_EMPTY_MESSAGE,
       });
       return;
     }
 
     set({
       projectsLoading: true,
-      projectsStatusText: FALLBACK_LOADING_MESSAGE,
-      projects: [],
     });
 
     const hasEnv =
@@ -99,7 +91,6 @@ export const useProjectStore = create<ProjectState>((set) => ({
           set({
             projects: mapped,
             projectsLoading: false,
-            projectsStatusText: '',
           });
           return;
         }
@@ -111,7 +102,6 @@ export const useProjectStore = create<ProjectState>((set) => ({
     set({
       projects: curatedFallbackProjects,
       projectsLoading: false,
-      projectsStatusText: FALLBACK_EMPTY_MESSAGE,
     });
   },
 }));

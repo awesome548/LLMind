@@ -16,7 +16,6 @@ export default function App() {
   const schemaStatus = useSchemaStore(state => state.schemaStatus);
   const projects = useProjectStore(state => state.projects);
   const projectsLoading = useProjectStore(state => state.projectsLoading);
-  const projectsStatusText = useProjectStore(state => state.projectsStatusText);
   
   // Select actions from store
   const setActiveTab = useAppStore(state => state.setActiveTab);
@@ -85,8 +84,8 @@ export default function App() {
         </main>
         <ProjectPanel
           projects={projects}
-          statusText={projectsStatusText}
           isLoading={projectsLoading}
+          isTableView={activeTab === 'table'}
         />
       </div>
     </div>

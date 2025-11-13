@@ -5,14 +5,16 @@ import { truncateText } from '../utils/text';
 
 export function ProjectPanel({
   projects,
-  statusText,
   isLoading,
+  isTableView,
 }: {
   projects: ProjectDetails[];
-  statusText: string;
   isLoading: boolean;
+  isTableView: boolean;
 }) {
-  const showProjects = !isLoading && projects.length > 0;
+  const hasProjects = projects.length > 0;
+  const shouldBlurProjects = isLoading && hasProjects;
+  const showProjects = hasProjects;
   const [selectedProject, setSelectedProject] = useState<ProjectDetails | null>(null);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const selectedProjectId = selectedProject?.id ?? selectedProject?.Id ?? null;
@@ -50,50 +52,64 @@ export function ProjectPanel({
 
   return (
     <aside className="project-panel" aria-busy={isLoading}>
-      <div className="project-list-wrapper" aria-live="polite">
-      <h2 className="panel-title">Related Projects</h2>
-        {statusText ? (
-          <p className="project-placeholder" role={isLoading ? 'status' : undefined}>
-            {statusText}
+      {isTableView ? (
+        <div className="panel-empty-state" role="note" aria-live="polite">
+          <p className="panel-empty-eyebrow">Table view focus</p>
+          <h2 className="panel-empty-title">This feature lives in Mind Map view</h2>
+          <p className="panel-empty-copy">
+            Switch back to the interactive Mind Map to explore context-aware project references without triggering new Supabase searches.
           </p>
-        ) : null}
-        {showProjects ? (
-          <div className="project-list">
-            {projects.map((p, i) => (
-              <article
-                className="project-card"
-                key={`${p.id || p.Id || i}`}
-                tabIndex={0}
-                role="button"
-                aria-label={`View details for ${p.Name || 'Untitled project'}`}
-                aria-haspopup="dialog"
-                onClick={() => openProject(p)}
-                onKeyDown={event => handleKeyDown(event, p)}
-              >
-                <h3 className="project-title">{p.Name || 'Untitled Project'}</h3>
-                {p.Image ? (
-                  <div className="project-image-wrapper">
-                    <img
-                      className="project-image"
-                      loading="lazy"
-                      src={p.Image}
-                      alt={p.Name ? `Preview of ${p.Name}` : 'Project preview image'}
-                      referrerPolicy="no-referrer"
-                      onError={e => console.error('Failed', e)}
-                    />
-                  </div>
-                ) : null}
-                {p.Descriptions ? (
-                  <p className="project-description">{truncateText(p.Descriptions, 200)}</p>
-                ) : null}
-                {p.Details ? (
-                  <p className="project-details">{truncateText(p.Details, 100)}</p>
-                ) : null}
-              </article>
-            ))}
-          </div>
-        ) : null}
-      </div>
+          <div className="panel-empty-pill">Mind Map exclusive</div>
+        </div>
+      ) : (
+        <div className="project-list-wrapper" aria-live="polite">
+          <h2 className="panel-title">Related Projects</h2>
+          {showProjects ? (
+            <div className="project-list-container">
+              <div className={`project-list${shouldBlurProjects ? ' project-list--loading' : ''}`}>
+                {projects.map((p, i) => (
+                  <article
+                    className="project-card"
+                    key={`${p.id || p.Id || i}`}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`View details for ${p.Name || 'Untitled project'}`}
+                    aria-haspopup="dialog"
+                    onClick={() => openProject(p)}
+                    onKeyDown={event => handleKeyDown(event, p)}
+                  >
+                    <h3 className="project-title">{p.Name || 'Untitled Project'}</h3>
+                    {p.Image ? (
+                      <div className="project-image-wrapper">
+                        <img
+                          className="project-image"
+                          loading="lazy"
+                          src={p.Image}
+                          alt={p.Name ? `Preview of ${p.Name}` : 'Project preview image'}
+                          referrerPolicy="no-referrer"
+                          onError={e => console.error('Failed', e)}
+                        />
+                      </div>
+                    ) : null}
+                    {p.Descriptions ? (
+                      <p className="project-description">{truncateText(p.Descriptions, 200)}</p>
+                    ) : null}
+                    {p.Details ? (
+                      <p className="project-details">{truncateText(p.Details, 100)}</p>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+              {shouldBlurProjects ? (
+                <div className="project-list-loading-overlay" role="status" aria-live="polite">
+                  <span className="project-list-loading-spinner" aria-hidden="true" />
+                  <span className="project-list-loading-text">Refreshing related projects…</span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      )}
       {selectedProject ? (
         <div
           className="project-modal-overlay"
