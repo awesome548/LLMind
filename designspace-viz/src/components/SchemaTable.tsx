@@ -10,6 +10,11 @@ export function SchemaTable({ active, schema, statusText }: { active: boolean; s
       </div>
       <div className="table-wrapper">
         <table className="schema-table" aria-describedby="table-status">
+          <colgroup>
+            <col className="schema-table__col schema-table__col--aspect" />
+            <col className="schema-table__col schema-table__col--description" />
+            <col className="schema-table__col schema-table__col--options" />
+          </colgroup>
           <thead>
             <tr>
               <th scope="col">Aspect</th>
@@ -22,9 +27,9 @@ export function SchemaTable({ active, schema, statusText }: { active: boolean; s
               <tr><td colSpan={3}>No aspects available in schema.</td></tr>
             ) : taxonomy.map((aspect, i) => (
               <tr key={i}>
-                <td>{aspect.Aspect || `Aspect ${i + 1}`}</td>
-                <td>{aspect.Description || '—'}</td>
-                <td>
+                <td className="schema-table__aspect">{aspect.Aspect || `Aspect ${i + 1}`}</td>
+                <td className="schema-table__description">{aspect.Description || '—'}</td>
+                <td className="schema-table__options">
                   {(aspect.Options?.length ? (
                     <ul>{aspect.Options!.map((o, j) => <li key={j}>{o}</li>)}</ul>
                   ) : '—')}
