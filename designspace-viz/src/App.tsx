@@ -28,6 +28,13 @@ export default function App() {
     loadSchema();
   }, [loadSchema]);
 
+  // Refresh schema whenever the table tab becomes active
+  useEffect(() => {
+    if (activeTab === 'table') {
+      loadSchema();
+    }
+  }, [activeTab, loadSchema]);
+
   // Generate mind map structure
   const mind = useMemo(() => {
     const taxonomy = Array.isArray(schema?.Taxonomy) ? schema.Taxonomy : [];
