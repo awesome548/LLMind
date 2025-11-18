@@ -26,7 +26,6 @@ A React + TypeScript application that turns a taxonomy into an interactive desig
 4. Create the default taxonomy in `public/taxonomy/schema.json` (should be generated statically for now, sample json is below)
 4. Launch the dev server: `npm run dev`
 5. Open the app at the URL printed in the console (default `http://localhost:5173`)
-6. Build for production when ready: `npm run build`
 
 ### schema.json
 ```json
