@@ -380,7 +380,6 @@ body {
   color: #4063d8;
   font-weight: 600;
 }
-
 .project-context-banner {
   margin-top: 20px;
   padding: 20px 22px;
@@ -389,9 +388,28 @@ body {
   border: 1px solid rgba(64, 99, 216, 0.18);
   box-shadow: 0 14px 32px -16px rgba(15, 23, 42, 0.3);
   backdrop-filter: blur(4px);
+}
+
+.project-context-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.project-context-info {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
+}
+
+.project-context-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .project-context-heading {
@@ -436,6 +454,59 @@ body {
   font-size: 0.96rem;
   color: #364152;
 }
+
+.mindmap-explore-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: none;
+  background: linear-gradient(135deg, #4a63ff 0%, #6d4aff 100%);
+  color: #fff;
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(74, 99, 255, 0.22);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  flex-shrink: 0;
+  white-space: nowrap;
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .project-context-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .mindmap-explore-button {
+    align-self: stretch;
+    justify-content: center;
+  }
+
+  .project-context-heading {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .project-context-title {
+    font-size: 1.24rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .project-context-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+}
+
 
 @media (min-width: 768px) {
   .project-context-heading {
@@ -699,7 +770,7 @@ body {
   }
 }
 
-.mindmap-explore-button {
+/* .mindmap-explore-button {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -714,10 +785,9 @@ body {
   cursor: pointer;
   box-shadow: 0 10px 24px rgba(74, 99, 255, 0.22);
   transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
-  /* spacing so the button isn't cramped against neighboring elements */
   margin-left: 12px;
   margin-top: 8px;
-}
+} */
 
 .mindmap-explore-button:not(:disabled):hover,
 .mindmap-explore-button:not(:disabled):focus-visible {

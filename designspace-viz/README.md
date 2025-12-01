@@ -1,6 +1,8 @@
-# TaxonAI Designspace Visualizer
+# LLMind Designspace Explorer
 
 A React + TypeScript application that turns a taxonomy into an interactive design space explorer. The interface combines a jsMind-powered mind map, a tabular schema view, and a related projects panel that can be enriched with OpenAI suggestions and Supabase vector search.
+
+[Watch Demo Video](https://youtu.be/svZto4WgieU)
 
 ## Requirements
 - Node.js 18+ and npm 10+ (Vite and the OpenAI SDK both expect a modern runtime).

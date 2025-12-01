@@ -287,21 +287,25 @@ export function MindMap({
 
   return (
     <section id="mindmap-panel" className={`tab-panel ${active ? 'active' : ''}`} role="tabpanel" aria-labelledby="mindmap-tab" hidden={!active}>
-      <div style={{ flexDirection: 'row' }}>
-        <div className="project-context-banner" aria-live="polite">
-          <div className="project-context-heading" style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <div className="project-context-banner" aria-live="polite">
+        <div className="project-context-content">
+          <div className="project-context-info">
             {contextText ? (
               <>
-              <h5 className="project-context-title">{contextText}</h5>
-            <span className="project-context-pill">Currently viewing</span>
+                <div className="project-context-header">
+                  <span className="project-context-pill">Currently viewing</span>
+                  <h5 className="project-context-title">{contextText}</h5>
+                </div>
+                {contextDescription && (
+                  <p className="project-context-description">{contextDescription}</p>
+                )}
               </>
-            ) : <p className='project-context-description'>No node selected</p>}
+            ) : (
+              <p className="project-context-description">No node selected</p>
+            )}
           </div>
-          <div style={{ flexDirection: 'row'}}>
-            {contextDescription ? (
-              <p className="project-context-description">{contextDescription}</p>
-            ) : null}
-            {contextText && (
+          
+          {contextText && (
             <button
               type="button"
               className={`mindmap-explore-button ${isLoading ? 'mindmap-explore-button--loading' : ''}`}
@@ -324,8 +328,7 @@ export function MindMap({
                 </>
               )}
             </button>
-            )}
-          </div>
+          )}
         </div>
       </div>
       <div id="jsmind_container" ref={containerRef} />

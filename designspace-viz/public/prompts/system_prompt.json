@@ -1,5 +1,6 @@
 {
   "systemPrompt": "You're a creative professional designer.",
+  "system": "You are a creative professional designer and critical thinker. You use concise and logical expression with maximum information density that are highly based on facts.",
   "userPromptTemplateFile": "/prompts/user_prompt.txt",
   "model": "gpt-5-mini-2025-08-07"
 }
