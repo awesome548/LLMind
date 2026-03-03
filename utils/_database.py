@@ -1,5 +1,5 @@
 """
-CLI to analyze, clean, and embed dataset into Chroma.
+CLI to analyze, clean, and embed dataset in supabase
 
 Commands:
   - analyze: Basic EDA on Detail field + histogram plot
