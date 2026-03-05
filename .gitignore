@@ -61,7 +61,6 @@ yarn-error.log*
 
 # Project local/generated data
 chroma_db/
-data/
+results/
 MISC_project_files/
-taxonomy/
 archive/

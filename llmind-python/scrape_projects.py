@@ -11,8 +11,8 @@ Flow:
 4) Write JSON
 
 Usage:
-  python _scrape.py scrape --limit 20
-  python _scrape.py scrape --listing https://awards.mediaarchitecture.org/mab/projects/ --limit 5 -o out.json
+  python scrape_projects.py scrape --limit 20
+  python scrape_projects.py scrape --listing https://awards.mediaarchitecture.org/mab/projects/ --limit 5 -o out.json
 """
 
 from __future__ import annotations

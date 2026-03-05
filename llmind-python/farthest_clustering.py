@@ -13,6 +13,8 @@ import warnings
 from typing import Any, Dict, List, Tuple
 from dotenv import load_dotenv
 from pathlib import Path
+import sklearn
+import matplotlib
 
 import numpy as np
 import typer
