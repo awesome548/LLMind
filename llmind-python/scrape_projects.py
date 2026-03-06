@@ -20,11 +20,8 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import dataclass, asdict
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse, urljoin
-from dotenv import load_dotenv
-import os
 
 from tenacity import Retrying, stop_after_attempt, wait_exponential, retry_if_exception_type
 import typer
@@ -32,11 +29,13 @@ import typer
 import requests
 from bs4 import BeautifulSoup
 
+from config import settings
+from utils.models import ProjectRecord
+from pydantic import ValidationError
+
 # -----------------------
 # Configuration
 # -----------------------
-
-load_dotenv()
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; MABProjectScraper/1.0; +https://example.org/)"
@@ -44,20 +43,6 @@ HEADERS = {
 TIMEOUT = 30
 
 SAVE_HTML_SNAPSHOT = False  # set True to include raw main HTML in JSON
-
-
-# -----------------------
-# Data model
-# -----------------------
-
-@dataclass
-class ProjectRecord:
-    url: str
-    Name: str
-    Descriptions: str
-    Details: str
-    image_href: Optional[str] = None
-    html_main: Optional[str] = None
 
 
 # -----------------------
@@ -140,7 +125,7 @@ def parse_listing_for_project_urls(listing_html: str, limit: Optional[int] = Non
         m = href_re.match(href)
         if not m:
             continue
-        abs_url = urljoin(os.getenv("BASE_URL"), href)
+        abs_url = urljoin(settings.base_url, href)
         if abs_url in seen:
             continue
         seen.add(abs_url)
@@ -242,7 +227,10 @@ def parse_project_page(url: str, html: str) -> ProjectRecord:
 
 def write_json(path: str, rows: List[ProjectRecord]) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        json.dump([asdict(r) for r in rows], f, ensure_ascii=False, indent=2)
+        json.dump([
+            r.model_dump() if hasattr(r, "model_dump") else r.dict()
+            for r in rows
+        ], f, ensure_ascii=False, indent=2)
 
 
 # -----------------------
@@ -250,6 +238,47 @@ def write_json(path: str, rows: List[ProjectRecord]) -> None:
 # -----------------------
 
 app = typer.Typer(add_completion=False)
+
+def run_scrape(
+    limit: Optional[int] = None,
+    delay: float = 0.8,
+    max_attempts: int = 4,
+    initial_backoff: float = 1.0,
+    max_backoff: float = 10.0,
+) -> list[ProjectRecord]:
+    """Scrape project pages and return records. No Typer dependency."""
+    session = requests.Session()
+    retryer = build_retryer(max_attempts=max_attempts, initial_backoff=initial_backoff, max_backoff=max_backoff)
+
+    listing_url = settings.default_listing_url
+    typer.echo(f"Fetching listing: {listing_url}")
+    listing_html = fetch_html(listing_url, session=session, retryer=retryer)
+    project_urls = parse_listing_for_project_urls(listing_html, limit=limit)
+    if not project_urls:
+        typer.secho("No project URLs found on listing page.", fg=typer.colors.RED)
+        return []
+
+    typer.secho(f"Discovered {len(project_urls)} project URL(s).", fg=typer.colors.GREEN)
+
+    results: list[ProjectRecord] = []
+    for i, url in enumerate(project_urls, 1):
+        try:
+            html = fetch_html(url, session=session, retryer=retryer)
+            rec = parse_project_page(url, html)
+            results.append(rec)
+            typer.secho(f"[{i}/{len(project_urls)}] OK {url} -> Name='{rec.Name[:80]}'", fg=typer.colors.GREEN)
+        except requests.HTTPError as e:
+            code = getattr(e.response, "status_code", "HTTPError")
+            typer.secho(f"[{i}/{len(project_urls)}] HTTP error {code} on {url}", fg=typer.colors.RED)
+        except ValidationError as e:
+            typer.secho(f"[{i}/{len(project_urls)}] Data validation error on {url}: {e}", fg=typer.colors.RED)
+        except Exception as e:
+            typer.secho(f"[{i}/{len(project_urls)}] Unhandled error on {url}: {e}", fg=typer.colors.RED)
+        finally:
+            time.sleep(delay)
+
+    return results
+
 
 @app.command("scrape")
 def scrape(
@@ -260,7 +289,7 @@ def scrape(
         min=0,
         help="Maximum number of project pages to scrape (in listing order). Use 0 to scrape all projects."
     ),
-    json_path: str = typer.Option(
+    json_path: Optional[str] = typer.Option(
         "media_architecture_projects.json",
         "--out",
         "-o",
@@ -289,47 +318,24 @@ def scrape(
         "--max-backoff",
         help="Maximum backoff (seconds) for exponential retry."
     ),
-) -> None:
-    """
-    Discover project URLs from the listing page, then scrape each project.
-    """
-    session = requests.Session()
-    retryer = build_retryer(max_attempts=max_attempts, initial_backoff=initial_backoff, max_backoff=max_backoff)
-
-    # 1) Get listing and extract project URLs
-    listing_url = os.getenv("DEFAULT_LISTING_URL")
-    typer.echo(f"Fetching listing: {os}")
-    listing_html = fetch_html(listing_url, session=session, retryer=retryer)
-    project_urls = parse_listing_for_project_urls(listing_html, limit=limit)
-    if not project_urls:
-        typer.secho("No project URLs found on listing page.", fg=typer.colors.RED)
-        raise typer.Exit(code=2)
-
-    typer.secho(f"Discovered {len(project_urls)} project URL(s).", fg=typer.colors.GREEN)
-
-    # 2) Scrape each project URL
-    results: List[ProjectRecord] = []
-    for i, url in enumerate(project_urls, 1):
-        try:
-            html = fetch_html(url, session=session, retryer=retryer)
-            rec = parse_project_page(url, html)
-            results.append(rec)
-            typer.secho(f"[{i}/{len(project_urls)}] OK {url} -> Name='{rec.Name[:80]}'", fg=typer.colors.GREEN)
-        except requests.HTTPError as e:
-            code = getattr(e.response, "status_code", "HTTPError")
-            typer.secho(f"[{i}/{len(project_urls)}] HTTP error {code} on {url}", fg=typer.colors.RED)
-        except Exception as e:
-            typer.secho(f"[{i}/{len(project_urls)}] Unhandled error on {url}: {e}", fg=typer.colors.RED)
-        finally:
-            time.sleep(delay)
+) -> list[ProjectRecord]:
+    """Discover project URLs from the listing page, then scrape each project."""
+    results = run_scrape(
+        limit=limit,
+        delay=delay,
+        max_attempts=max_attempts,
+        initial_backoff=initial_backoff,
+        max_backoff=max_backoff,
+    )
 
     if not results:
-        typer.secho("No results collected; exiting without writing.", fg=typer.colors.RED)
         raise typer.Exit(code=2)
 
-    write_json(os.getenv("DATA_DIR") + json_path, results)
-    typer.secho(f"Saved JSON -> {json_path}", fg=typer.colors.GREEN)
+    if json_path:
+        write_json(str(settings.data_dir / json_path), results)
+        typer.secho(f"Saved JSON -> {json_path}", fg=typer.colors.GREEN)
 
+    return results
 
 if __name__ == "__main__":
     app()
