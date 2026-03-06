@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { DEFAULT_TOPIC } from '../types/taxonomy';
+import { getSchemaAspects } from '../types/taxonomySchema';
 import { useSchemaStore } from './schemaStore';
 import { useProjectStore } from './projectStore';
 
@@ -29,7 +30,9 @@ export const useAppStore = create<AppState>((set) => ({
       ? hierarchySegments.slice(1).join(' > ')
       : (topic || DEFAULT_TOPIC);
 
-    if (!schema?.Taxonomy?.length) {
+    const aspects = getSchemaAspects(schema);
+
+    if (!aspects.length) {
       set({
         contextText: label,
         contextDescription: '',
@@ -45,22 +48,32 @@ export const useAppStore = create<AppState>((set) => ({
         .trim()
         .toLowerCase();
 
-    const aspects = schema.Taxonomy;
-    const aspectNames = new Set(aspects.map((aspect) => normalize(aspect.Aspect)));
+    const aspectNames = new Set(aspects.map((aspect) => normalize(aspect.name)));
 
     const lineageAspect =
       hierarchySegments.find((segment) => aspectNames.has(normalize(segment))) ||
       (aspectNames.has(normalize(topic)) ? topic : undefined);
 
     const matchingAspect = lineageAspect
-      ? aspects.find((aspect) => normalize(aspect.Aspect) === normalize(lineageAspect))
+      ? aspects.find((aspect) => normalize(aspect.name) === normalize(lineageAspect))
       : undefined;
+
+    const optionNames = new Set(
+      (matchingAspect?.options ?? []).map((option) => normalize(option.name))
+    );
+    const lineageOption =
+      hierarchySegments.find((segment) => optionNames.has(normalize(segment))) ||
+      (optionNames.has(normalize(topic)) ? topic : undefined);
+    const matchingOption = lineageOption
+      ? matchingAspect?.options?.find((option) => normalize(option.name) === normalize(lineageOption))
+      : undefined;
+    const contextDescription = matchingOption?.desc ?? matchingAspect?.desc ?? '';
 
     set({
       contextText: label,
-      contextDescription: matchingAspect?.Description ?? '',
+      contextDescription,
     });
 
-    searchProjects(topic, lineage, userInitiated, matchingAspect?.Description ?? '');
+    searchProjects(topic, lineage, userInitiated, contextDescription);
   },
 }));

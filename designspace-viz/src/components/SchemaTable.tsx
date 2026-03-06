@@ -1,7 +1,8 @@
 import type { SchemaDoc } from '../types/taxonomy';
+import { getSchemaAspects } from '../types/taxonomySchema';
 
 export function SchemaTable({ active, schema, statusText }: { active: boolean; schema: SchemaDoc | null; statusText: string; }) {
-  const taxonomy = Array.isArray(schema?.Taxonomy) ? schema!.Taxonomy! : [];
+  const taxonomy = getSchemaAspects(schema);
   return (
     <section id="table-panel" className={`tab-panel ${active ? 'active' : ''}`} role="tabpanel" aria-labelledby="table-tab" hidden={!active}>
       <div className="mindmap-header">
@@ -27,11 +28,11 @@ export function SchemaTable({ active, schema, statusText }: { active: boolean; s
               <tr><td colSpan={3}>No aspects available in schema.</td></tr>
             ) : taxonomy.map((aspect, i) => (
               <tr key={i}>
-                <td className="schema-table__aspect">{aspect.Aspect || `Aspect ${i + 1}`}</td>
-                <td className="schema-table__description">{aspect.Description || '—'}</td>
+                <td className="schema-table__aspect">{aspect.name || `Aspect ${i + 1}`}</td>
+                <td className="schema-table__description">{aspect.desc || '—'}</td>
                 <td className="schema-table__options">
-                  {(aspect.Options?.length ? (
-                    <ul>{aspect.Options!.map((o, j) => <li key={j}>{o}</li>)}</ul>
+                  {(aspect.options?.length ? (
+                    <ul>{aspect.options.map((option, j) => <li key={j}>{option.name}</li>)}</ul>
                   ) : '—')}
                 </td>
               </tr>

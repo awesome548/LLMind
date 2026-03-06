@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import type { SchemaDoc, SchemaAspect } from '../types/taxonomy';
+import type { SchemaDoc, SchemaOption } from '../types/taxonomy';
 import type { TaxonomyNode } from '../types/chatCompletion';
+import { safeParseSchemaDoc } from '../types/taxonomySchema';
 import { useMindMapStore } from './mindMapStore';
 
 type SchemaStatus = 'idle' | 'loading' | 'error' | 'loaded';
@@ -60,7 +61,7 @@ const buildSchemaFromMindMap = (): SchemaDoc | null => {
     ? nodes.filter((node) => node.parentid === rootId)
     : nodes.filter((node) => !node.parentid);
 
-  const aspects: SchemaAspect[] = aspectCandidates
+  const aspects = aspectCandidates
     .map((aspectNode, index) => {
       const aspectName = typeof aspectNode.topic === 'string' && aspectNode.topic.trim()
         ? aspectNode.topic.trim()
@@ -71,31 +72,42 @@ const buildSchemaFromMindMap = (): SchemaDoc | null => {
         : (typeof aspectNode.data?.description === 'string' ? aspectNode.data.description.trim() : '');
 
       const optionNodes = nodes.filter((node) => node.parentid === aspectNode.id);
-      const options = optionNodes
-        .map((option) => (typeof option.topic === 'string' ? option.topic.trim() : ''))
-        .filter((topic) => Boolean(topic));
+      const options: SchemaOption[] = optionNodes
+        .map((option) => {
+          const name = typeof option.topic === 'string' ? option.topic.trim() : '';
+          if (!name) {
+            return null;
+          }
 
-      const formatted: SchemaAspect = {
-        Aspect: aspectName,
+          const optionDescription = typeof option.description === 'string' && option.description.trim()
+            ? option.description.trim()
+            : (typeof option.data?.description === 'string' ? option.data.description.trim() : '');
+
+          return optionDescription
+            ? { name, desc: optionDescription }
+            : { name };
+        })
+        .filter((option): option is SchemaOption => Boolean(option));
+
+      return {
+        name: aspectName,
+        ...(description ? { desc: description } : {}),
+        ...(options.length ? { options } : {}),
       };
-
-      if (description) {
-        formatted.Description = description;
-      }
-
-      if (options.length) {
-        formatted.Options = options;
-      }
-
-      return formatted;
     })
-    .filter((aspect) => Boolean(aspect.Aspect));
+    .filter((aspect) => Boolean(aspect.name));
 
   if (!aspects.length) {
     return null;
   }
 
-  return { Taxonomy: aspects };
+  const parsedSchema = safeParseSchemaDoc({ aspects });
+  if (!parsedSchema.success) {
+    console.error('Invalid schema extracted from mind map:', parsedSchema.error);
+    return null;
+  }
+
+  return parsedSchema.data;
 };
 
 export const useSchemaStore = create<SchemaState>((set) => ({
@@ -111,10 +123,14 @@ export const useSchemaStore = create<SchemaState>((set) => ({
         return;
       }
 
-      const response = await fetch('/taxonomy/schema.json', { cache: 'no-store' });
+      const response = await fetch('/taxonomy/schema_selected.json', { cache: 'no-store' });
       if (!response.ok) throw new Error(String(response.status));
-      const json: SchemaDoc = await response.json();
-      set({ schema: json, schemaStatus: 'loaded' });
+      const json: unknown = await response.json();
+      const parsedSchema = safeParseSchemaDoc(json);
+      if (!parsedSchema.success) {
+        throw new Error(`Schema validation failed: ${parsedSchema.error}`);
+      }
+      set({ schema: parsedSchema.data, schemaStatus: 'loaded' });
     } catch (error) {
       console.error('Failed to load schema:', error);
       set({ schemaStatus: 'error' });

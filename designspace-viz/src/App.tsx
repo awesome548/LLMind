@@ -8,6 +8,7 @@ import { useAppStore } from './store/appStore';
 import { useSchemaStore } from './store/schemaStore';
 import { useProjectStore } from './store/projectStore';
 import { DEFAULT_TOPIC } from './types/taxonomy';
+import { getSchemaAspects } from './types/taxonomySchema';
 
 export default function App() {
   // Select state from store
@@ -16,7 +17,7 @@ export default function App() {
   const schemaStatus = useSchemaStore(state => state.schemaStatus);
   const projects = useProjectStore(state => state.projects);
   const projectsLoading = useProjectStore(state => state.projectsLoading);
-  
+
   // Select actions from store
   const setActiveTab = useAppStore(state => state.setActiveTab);
   const selectTopic = useAppStore(state => state.selectTopic);
@@ -36,7 +37,7 @@ export default function App() {
 
   // Generate mind map structure
   const mind = useMemo(() => {
-    const taxonomy = Array.isArray(schema?.Taxonomy) ? schema.Taxonomy : [];
+    const taxonomy = getSchemaAspects(schema);
     return {
       meta: { name: 'Taxon Mind Map', author: 'TaxonAI', version: '1.0' },
       format: 'node_tree',
@@ -45,12 +46,13 @@ export default function App() {
         topic: DEFAULT_TOPIC,
         children: taxonomy.map((aspect, i) => ({
           id: `aspect-${i}`,
-          topic: aspect.Aspect || `Aspect ${i + 1}`,
-          description: aspect.Description || '',
+          topic: aspect.name || `Aspect ${i + 1}`,
+          description: aspect.desc || '',
           direction: i % 2 === 0 ? 'left' : 'right',
-          children: (aspect.Options ?? []).map((opt, j) => ({ 
-            id: `aspect-${i}-opt-${j}`, 
-            topic: opt 
+          children: (aspect.options ?? []).map((opt, j) => ({
+            id: `aspect-${i}-opt-${j}`,
+            topic: opt.name,
+            description: opt.desc || '',
           }))
         }))
       }
@@ -69,16 +71,16 @@ export default function App() {
         <main className="mindmap-wrapper">
           <TabBar active={activeTab} onChange={setActiveTab} />
           <div className="tab-panels">
-            <MindMap 
-              active={activeTab === 'mindmap'} 
-              mind={mind} 
-              onSelect={selectTopic} 
-              statusText={statusMessage} 
+            <MindMap
+              active={activeTab === 'mindmap'}
+              mind={mind}
+              onSelect={selectTopic}
+              statusText={statusMessage}
             />
-            <SchemaTable 
-              active={activeTab === 'table'} 
-              schema={schema} 
-              statusText={statusMessage} 
+            <SchemaTable
+              active={activeTab === 'table'}
+              schema={schema}
+              statusText={statusMessage}
             />
           </div>
         </main>

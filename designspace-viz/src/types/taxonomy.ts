@@ -9,12 +9,17 @@ export type ProjectDetails = {
   Image?: string;
 };
 
+export type SchemaOption = {
+  name: string;
+  desc?: string;
+};
+
 export type SchemaAspect = {
-  Aspect: string;
-  Description?: string;
-  Options?: string[];
+  name: string;
+  desc?: string;
+  options?: SchemaOption[];
 };
 
 export type SchemaDoc = {
-  Taxonomy?: SchemaAspect[];
+  aspects: SchemaAspect[];
 };
