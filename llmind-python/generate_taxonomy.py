@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol
 from datetime import datetime
 
-from dotenv import load_dotenv
 import typer
 
-from data.models import Taxonomy
-from data.prompts import IDEA_FIRST_PROMPT, IDEA_REFLECTION_PROMPT, SYSTEM_PROMPT
+from config import settings
+from utils.models import Taxonomy
+from utils.prompts import IDEA_FIRST_PROMPT, IDEA_REFLECTION_PROMPT, SYSTEM_PROMPT
+from utils.modes import BackendMode, ContentMode
+from utils.clients import build_openai_client, build_vllm_client
+
+TAXONOMY_DIR = settings.taxonomy_dir
 
 
 # =============================
@@ -83,19 +86,10 @@ class OpenAIChat:
     _vllm_response_format: Dict[str, Any] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        from openai import OpenAI
-
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key and not self.base_url:
-            raise RuntimeError(
-                "OPENAI_API_KEY is not set. "
-                "Provide it via env var or set base_url for a vLLM endpoint."
-            )
-
-        self._client = OpenAI(
-            api_key=api_key or "vllm",  # vLLM ignores the key value
-            base_url=self.base_url,
-        )
+        if self.base_url:
+            self._client = build_vllm_client(self.base_url)
+        else:
+            self._client = build_openai_client()
         self._messages = [{"role": "system", "content": self.system_message}]
 
         # Pre-build the strict schema for the vLLM path
@@ -162,7 +156,9 @@ def run_generate(
 
     typer.secho("Generating initial taxonomy...", fg=typer.colors.GREEN)
     taxonomy = chat.send_message(first_prompt)
-    typer.secho(taxonomy.model_dump_json(indent=2), fg=typer.colors.CYAN)
+
+    if dev_mode:
+        typer.echo(taxonomy.model_dump_json(indent=2))
 
     # ── Self-refine loop (kept for future use) ──────────────────────────────
     # for i in range(1, num_reflections + 1):
@@ -192,7 +188,7 @@ def run_generate(
 
 def _save_taxonomy(out_file: Path, taxonomy: Taxonomy, mode: str, model: str) -> None:
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
-    dest = out_file.with_name(f"{out_file.stem}_{mode}_{model}_{stamp}.json")
+    dest = out_file / f"tax_{mode}_{model}_{stamp}.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(taxonomy.model_dump_json(indent=2), encoding="utf-8")
     typer.secho(f"Saved taxonomy to: {dest}", fg=typer.colors.BLUE)
@@ -210,9 +206,11 @@ app = typer.Typer(
 
 def _common_options() -> Dict[str, Any]:
     return dict(
-        out_file=typer.Option(
-            Path("../results/taxonomy/schema"),
-            help="Base path for the output JSON file (timestamp is appended).",
+        output=typer.Option(
+            TAXONOMY_DIR, 
+            "--output", 
+            "-o", 
+            help="Write results to JSON file"
         ),
         num_reflections=typer.Option(
             1,
@@ -225,10 +223,11 @@ def _common_options() -> Dict[str, Any]:
             "-i",
             help="Path to farthest-selected ids JSON from clustering (source=selected).",
         ),
-        selected_mode=typer.Option(
-            "both",
-            "--mode",
-            help="'details_only' or 'both' (details + descriptions).",
+        content_mode=typer.Option(
+            ContentMode.details,
+            "--content-mode",
+            "-c",
+            help="Which media_doc column to use: 'description', 'details', or 'hybrid'.",
         ),
         source=typer.Option(
             "selected",
@@ -245,35 +244,42 @@ def _common_options() -> Dict[str, Any]:
             "--reasoning",
             help="Reasoning effort for OpenAI models: 'low', 'medium', or 'high'.",
         ),
+        mode=typer.Option(
+            BackendMode.openai,
+            "--mode",
+            "-m",
+            help="Generation backend: 'openai' or 'vllm' (local).",
+        ),
         base_url=typer.Option(
-            None,
+            settings.vllm_base_url,
             "--base-url",
-            help="vLLM server base URL (e.g. http://localhost:8000/v1). Omit for OpenAI.",
+            help="vLLM server base URL (used when --mode=vllm).",
         ),
     )
 
 
-@app.command("openai")
-def openai_generate(
-    out_file: Path = _common_options()["out_file"],
+@app.command()
+def generate_tax(
+    output: Optional[Path] = _common_options()["output"],
     ids_file: Optional[Path] = _common_options()["ids_file"],
     num_reflections: int = _common_options()["num_reflections"],
-    selected_mode: str = _common_options()["selected_mode"],
-    source: str = _common_options()["source"],
+    content_mode: ContentMode = _common_options()["content_mode"],
     dev_mode: bool = _common_options()["dev_mode"],
     model_name: str = typer.Option(
         "gpt-5-nano-2025-08-07",
         help="Model name (e.g. 'gpt-4o', 'o3-mini', or a vLLM model path).",
     ),
     reasoning_effort: str = _common_options()["reasoning_effort"],
-    base_url: Optional[str] = _common_options()["base_url"],
+    mode: BackendMode = _common_options()["mode"],
+    base_url: str = _common_options()["base_url"],
 ) -> None:
     """Generate a taxonomy using an OpenAI-compatible model with structured output.
 
-    Supports the official OpenAI API and self-hosted vLLM endpoints.
+    Generation backends:
+      openai  Use OpenAI's hosted API (requires OPENAI_API_KEY).
+      vllm    Use a local vLLM server (OpenAI-compatible). Start it with:
+                vllm serve <model>
     """
-    load_dotenv()
-
     from utils.supabase import build_artefacts
 
     prompt = SYSTEM_PROMPT
@@ -283,27 +289,29 @@ def openai_generate(
     artefacts: List[Dict[str, Any]] = []
     try:
         artefacts = build_artefacts(
-            source="all_supabase" if source == "all_supabase" else "selected",
+            source="selected" if ids_file else "all_supabase",
             ids_file=ids_file,
-            mode="both" if selected_mode == "both" else "details_only",
+            content_mode=content_mode,
+            max_projects=50 if ids_file is None else None,
         )
-        label = "all rows" if source == "all_supabase" else "selected rows (ids file)"
+        label = "selected" if ids_file is not None else "all-rows"
         typer.echo(f"Loaded {len(artefacts)} artefacts from Supabase ({label}).")
     except Exception as exc:
         typer.secho(f"Warning: failed to build artefacts: {exc}", fg=typer.colors.YELLOW)
 
-    backend = f"vLLM @ {base_url}" if base_url else "OpenAI"
-    typer.echo(f"Backend: {backend}  |  Model: {model_name}")
+    resolved_base_url = base_url if mode == BackendMode.vllm else None
+    backend_label = f"vLLM @ {base_url}" if mode == BackendMode.vllm else "OpenAI"
+    typer.echo(f"Backend: {backend_label}  |  Model: {model_name}")
 
     chat = OpenAIChat(
         model=model_name,
         system_message=system_message,
         reasoning_effort=reasoning_effort,
-        base_url=base_url,
+        base_url=resolved_base_url,
     )
 
     taxonomy = run_generate(chat, project_overview, artefacts, num_reflections, dev_mode)
-    _save_taxonomy(out_file, taxonomy, f"{source}_{selected_mode}", model_name)
+    _save_taxonomy(output, taxonomy, f"{label}-{content_mode.value}", model_name)
 
 
 if __name__ == "__main__":

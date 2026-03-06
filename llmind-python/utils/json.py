@@ -1,7 +1,10 @@
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Tuple, Literal
+from __future__ import annotations
+
 import json
 import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
 
 def _load_json(path: Path, default: Any) -> Any:
     if not path.exists():
@@ -10,6 +13,18 @@ def _load_json(path: Path, default: Any) -> Any:
         return json.loads(path.read_text())
     except json.JSONDecodeError:
         return default
+
+
+def read_json_array(path: Path) -> List[Dict[str, Any]]:
+    if not path.exists():
+        raise FileNotFoundError(f"Input file not found: {path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError(f"Unable to read JSON from {path}: {exc}") from exc
+    if not isinstance(data, list):
+        raise ValueError(f"Input file must contain a JSON array: {path}")
+    return [dict(item) for item in data if isinstance(item, dict)]
 
 
 def save_json(path: Path, data: Any) -> None:

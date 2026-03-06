@@ -27,7 +27,6 @@ In <JSON>, provide the new ideas in JSON format with the following fields under 
 - Aspect: a key dimension or parameter of the design space (e.g., display technology, location, type of interaction).
 - Option: possible alternatives for an aspect (e.g., for the aspect “Display,” options might include LED panels or projection).
 For each Aspect, provide comprehensive Options. 
-Format should be strictly a set of "Aspects": str, "Options": list. 
 Nor futher nesting is allowed.
 
 This JSON will be automatically parsed, so ensure the format is precise."""
