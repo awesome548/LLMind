@@ -51,3 +51,33 @@ NEW IDEA JSON:
 In <JSON>, provide the refined ideas in JSON format that strictly follows the same structure as before.:
 
 Ensure the idea is clear and the JSON format is correct."""
+
+
+USER_PROMPT_TEMPLATE = """TASK:
+Explore into the given Aspect in the current Taxonomy, suggest new simple Options that:
+- define the range of possible paths through the design space.
+- serve both as enablers of creative thinking (by outlining possibilities) and constraints (by ruling out alternatives when one option is chosen)
+
+ASPECT TO EXPLORE:
+ID: {{SELECTED_NODE_ID}}
+Topic: {{SELECTED_NODE_TOPIC}}
+
+RELATED PROJECTS:
+{{RELATED_PROJECTS}}
+
+TAXONOMY:
+{{TAXONOMY}}
+
+Respond in the following format
+THOUGHT:
+<THOUGHT>
+
+NEW IDEA JSON:
+```json
+<JSON>
+```
+In <JSON> provide ID of the node that you explored and create new Node ids accordingly, and Options.
+Suppose explored node is "Aspect", each of new Nodes is "Option":
+- Aspect: a key dimension or parameter of the design space (e.g., display technology, location, type of interaction).
+- Option: possible alternatives for an aspect (e.g., for the aspect "Display," options might include LED panels or projection).
+the options should be concise and simple."""
