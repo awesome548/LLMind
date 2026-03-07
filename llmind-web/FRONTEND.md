@@ -19,3 +19,11 @@ frontend/
 │   └── lib/                # Utils (api-client.ts, utils.ts)
 ├── bun.lockb
 └── package.json
+
+Category,Recommended Tool,2026 Advantage
+Runtime,Bun,"Instant startup, native TS, fastest installs."
+Framework,Next.js 16,"Stable RSC, React Compiler (No more useMemo)."
+Logic Layer,TanStack Query,High-performance server-state & cache sync.
+Global Store,Zustand,"Minimalist, high-speed client-side state."
+API Bridge,openapi-typescript,Eliminates manual type-definitions.
+Styling,Tailwind CSS,Best-in-class AI-code generation compatibility.
