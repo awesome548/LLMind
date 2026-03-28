@@ -27,3 +27,6 @@ Logic Layer,TanStack Query,High-performance server-state & cache sync.
 Global Store,Zustand,"Minimalist, high-speed client-side state."
 API Bridge,openapi-typescript,Eliminates manual type-definitions.
 Styling,Tailwind CSS,Best-in-class AI-code generation compatibility.
+
+### OpenAPI type generation
+bunx openapi-typescript http://localhost:8000/openapi.json -o src/types/openapi.ts
