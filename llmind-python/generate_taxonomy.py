@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol
 from datetime import datetime
@@ -181,6 +182,59 @@ def run_generate(
 
     return taxonomy
 
+def generate_taxonomy(
+    project_overview_input: str,
+    ids_file: Path,
+    num_reflections: int,
+    content_mode: ContentMode,
+    model_name: str = "gpt-5-nano-2025-08-07",
+    reasoning_effort: str = "medium",
+    mode: BackendMode = BackendMode.openai,
+    base_url: str | None = settings.vllm_base_url, 
+) -> Taxonomy:
+    """Generate a taxonomy using an OpenAI-compatible model with structured output.
+
+    Generation backends:
+      openai  Use OpenAI's hosted API (requires OPENAI_API_KEY).
+      vllm    Use a local vLLM server (OpenAI-compatible). Start it with:
+                vllm serve <model>
+    """
+    from utils.supabase import build_artefacts
+
+    prompt = SYSTEM_PROMPT
+    project_overview: str = project_overview_input if project_overview_input else prompt.get("project", "")
+    system_message: str = prompt.get("system", "You are a creative professional designer.")
+
+    artefacts: List[Dict[str, Any]] = []
+
+    if os.exists(ids_file):
+        try:
+            artefacts = build_artefacts(
+                source="selected" if ids_file else "all_supabase",
+                ids_file=ids_file,
+                content_mode=content_mode,
+                max_projects=50 if ids_file is None else None,
+            )
+            label = "selected" if ids_file is not None else "all-rows"
+            typer.echo(f"Loaded {len(artefacts)} artefacts from Supabase ({label}).")
+        except Exception as exc:
+            typer.secho(f"Warning: failed to build artefacts: {exc}", fg=typer.colors.YELLOW)
+    else:
+        return Taxonomy(aspects=[])  # Return empty taxonomy if ids_file doesn't exist
+
+    resolved_base_url = base_url if mode == BackendMode.vllm else None
+    backend_label = f"vLLM @ {base_url}" if mode == BackendMode.vllm else "OpenAI"
+    typer.echo(f"Backend: {backend_label}  |  Model: {model_name}")
+
+    chat = OpenAIChat(
+        model=model_name,
+        system_message=system_message,
+        reasoning_effort=reasoning_effort,
+        base_url=resolved_base_url,
+    )
+
+    taxonomy = run_generate(chat, project_overview, artefacts, num_reflections, dev_mode=False) # Always disable dev_mode for this API 
+    return taxonomy
 
 # =============================
 # Persistence helpers
