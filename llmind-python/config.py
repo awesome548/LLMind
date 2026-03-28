@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     supabase_similarity_threshold: float = 0.0
 
     # ── vLLM (local embeddings) ───────────────────────────────────────────────
-    vllm_base_url: str = "http://localhost:8000/v1"
+    vllm_base_url: str = "http://100.73.44.12:8001/v1"
     vllm_embed_model: str = "BAAI/bge-small-en-v1.5"
 
     # ── Scraper ───────────────────────────────────────────────────────────────
