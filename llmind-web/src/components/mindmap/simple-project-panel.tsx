@@ -1,13 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import {
-  getProjectDescription,
-  getProjectDetail,
-  getProjectId,
-  getProjectImageUrl,
-  getProjectName,
-} from '@/src/components/mindmap/project-fields';
 import { cn } from '@/src/lib/utils';
 import type { MindmapProjectSchema } from '@/src/types/openapi';
 
@@ -16,8 +9,69 @@ interface SimpleProjectPanelProps {
   isLoading?: boolean;
 }
 
-function projectKey(project: MindmapProjectSchema, index: number): string {
-  return getProjectId(project, index);
+type LooseProjectRecord = MindmapProjectSchema & Record<string, unknown>;
+
+interface ProjectListItemViewModel {
+  id: string;
+  name: string;
+  description: string;
+  detail: string;
+  imageUrl: string | null;
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function getProjectId(project: LooseProjectRecord, index: number): string {
+  return readString(project.id) || readString(project.Id) || `project-${index}`;
+}
+
+function getProjectName(project: LooseProjectRecord): string {
+  return readString(project.Name) || readString(project.name) || 'Untitled';
+}
+
+function getProjectDescription(project: LooseProjectRecord): string {
+  return readString(project.Descriptions) || readString(project.description);
+}
+
+function getProjectDetail(project: LooseProjectRecord): string {
+  return readString(project.Details) || readString(project.detail);
+}
+
+function getProjectImageUrl(project: LooseProjectRecord): string | null {
+  const rawValue = readString(project.Image) || readString(project.image);
+  if (!rawValue) {
+    return null;
+  }
+
+  if (rawValue.startsWith('/')) {
+    return rawValue;
+  }
+
+  try {
+    const parsedUrl = new URL(rawValue);
+    return parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:'
+      ? parsedUrl.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function toProjectListItem(
+  project: MindmapProjectSchema,
+  index: number
+): ProjectListItemViewModel {
+  const record = project as LooseProjectRecord;
+
+  return {
+    id: getProjectId(record, index),
+    name: getProjectName(record),
+    description: getProjectDescription(record),
+    detail: getProjectDetail(record),
+    imageUrl: getProjectImageUrl(record),
+  };
 }
 
 function truncate(text: string, max: number): string {
@@ -34,14 +88,86 @@ function Skeleton() {
   );
 }
 
+interface ProjectListProps {
+  items: ReadonlyArray<ProjectListItemViewModel>;
+  activeId: string | null;
+  onSelect: (id: string) => void;
+}
+
+function ProjectList({ items, activeId, onSelect }: ProjectListProps) {
+  if (items.length === 0) {
+    return (
+      <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+        No projects found.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="space-y-1.5">
+      {items.map((item) => (
+        <li key={item.id}>
+          <button
+            type="button"
+            onClick={() => onSelect(item.id)}
+            className={cn(
+              'w-full rounded-lg border px-3 py-2.5 text-left text-sm transition-colors',
+              item.id === activeId
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-border hover:bg-muted'
+            )}
+          >
+            <p className="font-medium leading-snug">{item.name}</p>
+            {item.description ? (
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {truncate(item.description, 70)}
+              </p>
+            ) : null}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+interface ProjectDetailProps {
+  project: ProjectListItemViewModel | null;
+}
+
+function ProjectDetail({ project }: ProjectDetailProps) {
+  if (!project) {
+    return <p className="text-sm text-muted-foreground">Select a project to view details.</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <h3 className="font-semibold leading-tight">{project.name}</h3>
+      {project.imageUrl ? (
+        <img
+          key={project.imageUrl}
+          src={project.imageUrl}
+          alt={project.name || 'Project image'}
+          className="h-36 w-full rounded-lg object-cover"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+        />
+      ) : null}
+      {project.description ? (
+        <p className="text-sm text-muted-foreground">{project.description}</p>
+      ) : null}
+      {project.detail ? <p className="text-sm">{project.detail}</p> : null}
+    </div>
+  );
+}
+
 export function SimpleProjectPanel({ projects, isLoading = false }: SimpleProjectPanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const items = projects.map((p, i) => ({ id: projectKey(p, i), project: p }));
-  const activeId = items.some((it) => it.id === selectedId)
+  const items = projects.map(toProjectListItem);
+  const activeId = items.some((item) => item.id === selectedId)
     ? selectedId
     : (items[0]?.id ?? null);
-  const selected = items.find((it) => it.id === activeId)?.project ?? null;
+  const selectedProject = items.find((item) => item.id === activeId) ?? null;
 
   return (
     <div className="flex min-h-[520px] flex-col overflow-hidden rounded-xl border bg-card">
@@ -54,36 +180,8 @@ export function SimpleProjectPanel({ projects, isLoading = false }: SimpleProjec
         <div className="overflow-y-auto p-3">
           {isLoading ? (
             <Skeleton />
-          ) : items.length === 0 ? (
-            <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-              No projects found.
-            </p>
           ) : (
-            <ul className="space-y-1.5">
-              {items.map((item) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(item.id)}
-                    className={cn(
-                      'w-full rounded-lg border px-3 py-2.5 text-left text-sm transition-colors',
-                      item.id === activeId
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border hover:bg-muted'
-                    )}
-                  >
-                    <p className="font-medium leading-snug">
-                      {getProjectName(item.project)}
-                    </p>
-                    {getProjectDescription(item.project) ? (
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {truncate(getProjectDescription(item.project), 70)}
-                      </p>
-                    ) : null}
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <ProjectList items={items} activeId={activeId} onSelect={setSelectedId} />
           )}
         </div>
 
@@ -96,29 +194,8 @@ export function SimpleProjectPanel({ projects, isLoading = false }: SimpleProjec
               <div className="h-4 rounded bg-muted" />
               <div className="h-4 w-4/5 rounded bg-muted" />
             </div>
-          ) : selected ? (
-            <div className="space-y-3">
-              <h3 className="font-semibold leading-tight">{getProjectName(selected)}</h3>
-              {getProjectImageUrl(selected) ? (
-                <img
-                  src={getProjectImageUrl(selected) ?? ''}
-                  alt={getProjectName(selected) || 'Project image'}
-                  className="h-36 w-full rounded-lg object-cover"
-                  loading="lazy"
-                  referrerPolicy="no-referrer"
-                />
-              ) : null}
-              {getProjectDescription(selected) ? (
-                <p className="text-sm text-muted-foreground">
-                  {getProjectDescription(selected)}
-                </p>
-              ) : null}
-              {getProjectDetail(selected) ? (
-                <p className="text-sm">{getProjectDetail(selected)}</p>
-              ) : null}
-            </div>
           ) : (
-            <p className="text-sm text-muted-foreground">Select a project to view details.</p>
+            <ProjectDetail project={selectedProject} />
           )}
         </div>
       </div>
