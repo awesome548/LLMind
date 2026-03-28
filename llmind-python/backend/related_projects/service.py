@@ -17,9 +17,14 @@ class ServiceError(RuntimeError):
     """Raised when an external dependency or model response fails."""
 
 
+class NodeOption(BaseModel):
+    id: str = Field(min_length=1)
+    topic: str = Field(min_length=1)
+
+
 class NodeGenerationPayload(BaseModel):
     parent_id: str = Field(min_length=1)
-    options: dict[str, str] = Field(default_factory=dict)
+    options: list[NodeOption] = Field(default_factory=list)
 
 
 CURATED_FALLBACK_PROJECTS: list[dict[str, Any]] = [
@@ -84,9 +89,10 @@ def _generate_node_payload(
     user_prompt: str,
     mode: BackendMode,
     reasoning_effort: str = "medium",
+    base_url: str | None = None,
 ) -> NodeGenerationPayload:
     if mode == BackendMode.vllm:
-        resolved_base_url = settings.vllm_base_url
+        resolved_base_url = base_url or settings.vllm_base_url
         client = build_vllm_client(resolved_base_url)
         response_format = {
             "type": "json_schema",
@@ -336,16 +342,17 @@ def generate_nodes_from_related_projects(
             user_prompt=user_prompt,
             mode=mode,
             reasoning_effort=reasoning_effort,
+            base_url=base_url,
         )
 
-        options = {str(key): str(value) for key, value in parsed.options.items()}
+        options = {opt.id: opt.topic for opt in parsed.options}
         node_array = [
             {
-                "node_id": node_id,
-                "topic": topic,
+                "node_id": opt.id,
+                "topic": opt.topic,
                 "parent_node": parsed.parent_id,
             }
-            for node_id, topic in options.items()
+            for opt in parsed.options
         ]
 
         return {

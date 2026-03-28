@@ -80,4 +80,13 @@ In <JSON> provide ID of the node that you explored and create new Node ids accor
 Suppose explored node is "Aspect", each of new Nodes is "Option":
 - Aspect: a key dimension or parameter of the design space (e.g., display technology, location, type of interaction).
 - Option: possible alternatives for an aspect (e.g., for the aspect "Display," options might include LED panels or projection).
-the options should be concise and simple."""
+the options should be concise and simple.
+
+Use the following JSON structure exactly:
+{
+  "parent_id": "<SELECTED_NODE_ID>",
+  "options": [
+    { "id": "<new_node_id>", "topic": "<option label>" },
+    { "id": "<new_node_id>", "topic": "<option label>" }
+  ]
+}"""
