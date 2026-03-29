@@ -13,6 +13,7 @@ interface SimpleMindMapProps {
   nodes: ReadonlyArray<MindmapNode>;
   activeTopic: string;
   onSelect: (selection: MindmapSelection) => void;
+  onDataChange?: (nodes: ReadonlyArray<MindmapNode>) => void;
 }
 
 interface MindElixirModel {
@@ -20,6 +21,8 @@ interface MindElixirModel {
   lineageById: Readonly<Record<string, string[]>>;
   topicToId: Readonly<Record<string, string>>;
 }
+
+const SYNTHETIC_ROOT_ID = '__root__';
 
 function convertNode(
   node: MindmapNode,
@@ -55,11 +58,27 @@ function buildModel(nodes: ReadonlyArray<MindmapNode>): MindElixirModel {
   }
 
   // Multiple root nodes — wrap in synthetic root
-  lineageById['__root__'] = ['Mind Map'];
-  topicToId['Mind Map'] = '__root__';
+  lineageById[SYNTHETIC_ROOT_ID] = ['Mind Map'];
+  topicToId['Mind Map'] = SYNTHETIC_ROOT_ID;
   const children = nodes.map((n) => convertNode(n, ['Mind Map'], lineageById, topicToId));
-  const nodeData = { id: '__root__', topic: 'Mind Map', children } as MindElixirData['nodeData'];
+  const nodeData = { id: SYNTHETIC_ROOT_ID, topic: 'Mind Map', children } as MindElixirData['nodeData'];
   return { data: { nodeData }, lineageById, topicToId };
+}
+
+function nodeObjToMindmapNode(node: NodeObj): MindmapNode {
+  return {
+    id: node.id,
+    topic: node.topic,
+    children: node.children?.length ? node.children.map(nodeObjToMindmapNode) : undefined,
+  };
+}
+
+function mindElixirDataToNodes(data: MindElixirData): ReadonlyArray<MindmapNode> {
+  const root = data.nodeData;
+  if (root.id === SYNTHETIC_ROOT_ID) {
+    return (root.children ?? []).map(nodeObjToMindmapNode);
+  }
+  return [nodeObjToMindmapNode(root)];
 }
 
 function buildLineageFromParent(node: NodeObj): string[] {
@@ -68,15 +87,18 @@ function buildLineageFromParent(node: NodeObj): string[] {
     : [node.topic];
 }
 
-export function SimpleMindMap({ nodes, activeTopic, onSelect }: SimpleMindMapProps) {
+export function SimpleMindMap({ nodes, activeTopic, onSelect, onDataChange }: SimpleMindMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mindRef = useRef<MindElixirInstance | null>(null);
   const onSelectRef = useRef(onSelect);
+  const onDataChangeRef = useRef(onDataChange);
   const isSyncingRef = useRef(false);
+  const skipRefreshRef = useRef(false);
   const model = useMemo(() => buildModel(nodes), [nodes]);
   const modelRef = useRef(model);
 
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
+  useEffect(() => { onDataChangeRef.current = onDataChange; }, [onDataChange]);
   useEffect(() => { modelRef.current = model; }, [model]);
 
   // Init mind-elixir once
@@ -87,21 +109,21 @@ export function SimpleMindMap({ nodes, activeTopic, onSelect }: SimpleMindMapPro
     const mind = new MindElixir({
       el: container,
       direction: MindElixir.SIDE,
-      editable: false,
-      contextMenu: false,
+      editable: true,
+      contextMenu: true,
       toolBar: false,
-      keypress: false,
-      allowUndo: false,
+      keypress: true,
+      allowUndo: true,
     });
 
     mind.init(model.data);
 
+    // Sync node selection → React state
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handleMapClick = (e: any) => {
       if (isSyncingRef.current) return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let el: any = e.target;
-      // Walk up to find me-tpc element
       while (el && el.tagName !== 'ME-TPC') {
         el = el.parentElement ?? null;
         if (!el || el === mind.map) return;
@@ -115,6 +137,14 @@ export function SimpleMindMap({ nodes, activeTopic, onSelect }: SimpleMindMapPro
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mind.map as any).addEventListener('click', handleMapClick);
 
+    // Sync structural edits (add/delete/rename/move) → React nodes state
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mind.bus.addListener('operation', (_op: any) => {
+      skipRefreshRef.current = true;
+      const newNodes = mindElixirDataToNodes(mind.getData());
+      onDataChangeRef.current?.(newNodes);
+    });
+
     mindRef.current = mind;
     return () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -124,8 +154,12 @@ export function SimpleMindMap({ nodes, activeTopic, onSelect }: SimpleMindMapPro
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Refresh when node data changes
+  // Refresh when node data changes (skip if change originated from mind-elixir itself)
   useEffect(() => {
+    if (skipRefreshRef.current) {
+      skipRefreshRef.current = false;
+      return;
+    }
     mindRef.current?.refresh(model.data);
   }, [model.data]);
 

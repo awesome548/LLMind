@@ -5,11 +5,13 @@ import {
   ChevronRight,
   Home,
   Info,
+  Loader2,
   PanelsRightBottom,
+  Sparkles,
   Zap,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { SimpleMindMap } from '@/src/components/mindmap/simple-mindmap';
 import { SimpleProjectPanel } from '@/src/components/mindmap/simple-project-panel';
 import { Badge } from '@/src/components/ui/badge';
@@ -24,6 +26,7 @@ import { Separator } from '@/src/components/ui/separator';
 import {
   SCHEMA_MINDMAP_NODES,
   SCHEMA_DESCRIPTION_BY_TOPIC,
+  taxonomyToMindmapNodes,
 } from '@/src/features/mindmap/data/schema-mindmap-data';
 import {
   generatedNodesToMindmapNodes,
@@ -31,6 +34,9 @@ import {
 } from '@/src/features/mindmap/hooks/use-generate-nodes-mutation';
 import { useRelatedProjectsQuery } from '@/src/features/mindmap/hooks/use-related-projects-query';
 import type { MindmapNode, MindmapSelection } from '@/src/features/mindmap/types';
+import { GenerateTaxonomyDialog } from '@/src/features/mindmap/components/generate-taxonomy-dialog';
+import { GenerateNodesDialog } from '@/src/features/mindmap/components/generate-nodes-dialog';
+import type { GenerateNodesParams } from '@/src/features/mindmap/hooks/use-generate-nodes-mutation';
 import { useMindmapStore } from '@/src/store/mindmap-store';
 import type { FetchRelatedProjectsRequestSchema } from '@/src/types/openapi';
 
@@ -122,6 +128,8 @@ function insertChildrenAtNode(
 
 export default function MindmapPage() {
   const selectTopic = useMindmapStore((state) => state.selectTopic);
+  const taxonomy = useMindmapStore((state) => state.taxonomy);
+  const setTaxonomy = useMindmapStore((state) => state.setTaxonomy);
   const { mutateAsync: generateNodes, isPending: isGeneratingNodes } = useGenerateNodesMutation();
 
   const [nodes, setNodes] = useState<ReadonlyArray<MindmapNode>>(() =>
@@ -132,8 +140,22 @@ export default function MindmapPage() {
     lineage: [...INITIAL_SELECTION.lineage],
   });
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [taxonomyDialogOpen, setTaxonomyDialogOpen] = useState(() => !taxonomy);
+  const [generateNodesDialogOpen, setGenerateNodesDialogOpen] = useState(false);
 
-  const description = SCHEMA_DESCRIPTION_BY_TOPIC[selection.topic] ?? '';
+  const activeDescriptionByTopic = useMemo(
+    () => (taxonomy ? taxonomyToMindmapNodes(taxonomy).descriptionByTopic : SCHEMA_DESCRIPTION_BY_TOPIC),
+    [taxonomy]
+  );
+
+  useEffect(() => {
+    if (!taxonomy) return;
+    const { nodes: nextNodes } = taxonomyToMindmapNodes(taxonomy);
+    setNodes(nextNodes);
+    setSelection({ topic: INITIAL_SELECTION.topic, lineage: [...INITIAL_SELECTION.lineage] });
+  }, [taxonomy]);
+
+  const description = activeDescriptionByTopic[selection.topic] ?? '';
   const request = buildRequest(selection, description);
   const { data, isFetching } = useRelatedProjectsQuery({ request });
 
@@ -152,7 +174,9 @@ export default function MindmapPage() {
     });
   };
 
-  const handleGenerateNodes = async () => {
+  const handleGenerateNodes = async (
+    dialogParams?: Pick<GenerateNodesParams, 'description' | 'mode' | 'reasoningEffort'>
+  ) => {
     const focusNode = findNodeByLineage(nodes, selection.lineage);
     if (!focusNode) {
       setGenerateError('Unable to locate the selected topic in the current mind map.');
@@ -160,6 +184,7 @@ export default function MindmapPage() {
     }
 
     setGenerateError(null);
+    setGenerateNodesDialogOpen(false);
 
     try {
       const fetchedProjects = data?.projects ?? [];
@@ -168,12 +193,16 @@ export default function MindmapPage() {
       );
       const relatedProjects = hasRealProjects ? fetchedProjects : null;
 
+      const contextDescription = dialogParams?.description ?? description;
+
       const response = await generateNodes({
         allNodes: nodes,
         focusNode: { id: focusNode.id, topic: focusNode.topic },
-        description,
+        description: contextDescription,
         shouldQuerySupabase: !hasRealProjects,
         relatedProjects,
+        mode: dialogParams?.mode,
+        reasoningEffort: dialogParams?.reasoningEffort,
       });
 
       const generatedChildren = generatedNodesToMindmapNodes(response);
@@ -208,17 +237,27 @@ export default function MindmapPage() {
         <div className="flex items-center gap-2">
           <Button
             type="button"
+            variant="outline"
             size="sm"
-            onClick={handleGenerateNodes}
+            onClick={() => setTaxonomyDialogOpen(true)}
+            className="h-8 gap-1.5 rounded-full px-4 text-xs font-semibold shadow-sm"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Generate Taxonomy
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => setGenerateNodesDialogOpen(true)}
             disabled={isGeneratingNodes || isFetching}
             className="h-8 gap-1.5 rounded-full px-4 text-xs font-semibold shadow-sm"
           >
             {isGeneratingNodes ? (
-              <Zap className="h-3.5 w-3.5 animate-pulse fill-current" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <Zap className="h-3.5 w-3.5 fill-current" />
             )}
-            {isGeneratingNodes ? 'Generating' : 'Generate Nodes'}
+            {isGeneratingNodes ? 'Generating...' : 'Generate Nodes'}
           </Button>
           <Separator orientation="vertical" className="mx-1 h-4" />
           <Link
@@ -233,7 +272,7 @@ export default function MindmapPage() {
 
       {/* Floating Lineage / Info Panel */}
       <div className="absolute top-4 left-4 z-40 w-full max-w-sm">
-        <Collapsible defaultOpen>
+        <Collapsible defaultOpen={true}>
           <section className="overflow-hidden rounded-2xl border bg-background/90 shadow-xl backdrop-blur-md">
             <div className="flex items-center justify-between px-4 py-3">
               <div className="flex items-center gap-2">
@@ -277,7 +316,7 @@ export default function MindmapPage() {
                       <button
                         type="button"
                         className="underline underline-offset-2"
-                        onClick={handleGenerateNodes}
+                        onClick={() => setGenerateNodesDialogOpen(true)}
                         disabled={isGeneratingNodes}
                       >
                         Retry
@@ -297,12 +336,27 @@ export default function MindmapPage() {
           nodes={nodes}
           activeTopic={selection.topic}
           onSelect={handleSelect}
+          onDataChange={setNodes}
         />
       </div>
 
+      <GenerateTaxonomyDialog
+        open={taxonomyDialogOpen}
+        onOpenChange={setTaxonomyDialogOpen}
+        onSuccess={setTaxonomy}
+      />
+
+      <GenerateNodesDialog
+        open={generateNodesDialogOpen}
+        onOpenChange={setGenerateNodesDialogOpen}
+        onConfirm={handleGenerateNodes}
+        isPending={isGeneratingNodes}
+        selectedTopic={selection.topic}
+      />
+
       {/* Floating Related Projects Panel */}
       <div className="absolute top-4 right-4 z-40 w-full max-w-md">
-        <Collapsible defaultOpen>
+        <Collapsible defaultOpen={true}>
           <section className="overflow-hidden rounded-2xl border bg-background/90 shadow-xl backdrop-blur-md">
             <div className="flex items-center justify-between px-4 py-3">
               <div className="flex items-center gap-2">

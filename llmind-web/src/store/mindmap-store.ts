@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
+import type { TaxonomyInput } from '../features/mindmap/data/schema-mindmap-data';
 import type { MindmapProjectSchema } from '../types/openapi';
 
 const DEFAULT_CONTEXT_TEXT = 'Mindmap';
@@ -36,11 +37,13 @@ interface MindmapStoreState {
   selectedTopic: string;
   projects: MindmapProjectSchema[];
   projectsLoading: boolean;
+  taxonomy: TaxonomyInput | null;
   setJmRef: (ref: unknown | null) => void;
   selectTopic: (input: MindmapSelectionInput) => void;
   setContext: (context: { contextText: string; contextDescription: string }) => void;
   setProjects: (projects: MindmapProjectSchema[]) => void;
   setProjectsLoading: (isLoading: boolean) => void;
+  setTaxonomy: (taxonomy: TaxonomyInput) => void;
   setMindmapData: (payload: {
     contextText?: string;
     contextDescription?: string;
@@ -57,6 +60,7 @@ const createInitialState = () => ({
   selectedTopic: '',
   projects: getDefaultProjects(),
   projectsLoading: false,
+  taxonomy: null as TaxonomyInput | null,
 });
 
 export const useMindmapStore = create<MindmapStoreState>()(
@@ -84,6 +88,8 @@ export const useMindmapStore = create<MindmapStoreState>()(
           set(() => ({
             projectsLoading: isLoading,
           })),
+        setTaxonomy: (taxonomy) =>
+          set(() => ({ taxonomy })),
         setMindmapData: (payload) =>
           set((state) => ({
             contextText: payload.contextText ?? state.contextText,
@@ -103,6 +109,7 @@ export const useMindmapStore = create<MindmapStoreState>()(
           contextDescription: state.contextDescription,
           selectedTopic: state.selectedTopic,
           projects: state.projects,
+          taxonomy: state.taxonomy,
         }),
       }
     ),
