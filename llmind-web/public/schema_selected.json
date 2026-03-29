@@ -1,0 +1,144 @@
+{
+  "aspects": [
+    {
+      "name": "Display Technology",
+      "desc": "Primary medium and technology chosen to realize facade/media art; determines resolution, brightness, viewing angles, and interactivity.",
+      "options": [
+        {
+          "name": "LED wall panels",
+          "desc": "Outdoor-grade LED panels with scalable resolution and high brightness for building facades."
+        },
+        {
+          "name": "Projection mapping",
+          "desc": "Multi-projector setup projecting onto architectural surfaces for flexible geometry."
+        },
+        {
+          "name": "Smartphone-distributed screens",
+          "desc": "Content distributed to attendees' devices to form a participatory display network."
+        },
+        {
+          "name": "AI-driven kinetic light sculpture",
+          "desc": "Dynamic light sculpture using actuated elements to create moving light geometries."
+        },
+        {
+          "name": "Laser-beam architecture",
+          "desc": "Directed laser/beam-based lighting to form lines and patterns on the surface."
+        }
+      ]
+    },
+    {
+      "name": "Urban Context",
+      "desc": "Physical placement within the city, influencing audience reach, access, and regulatory constraints.",
+      "options": [
+        {
+          "name": "Public plaza/square",
+          "desc": "Open urban space with high pedestrian flow; scheduling must consider safety."
+        },
+        {
+          "name": "Transit hub/station",
+          "desc": "High-visibility corridor with commuters; focus on legibility and timing."
+        },
+        {
+          "name": "Retail frontage / department store",
+          "desc": "Facade integration with retail environment and brand storytelling."
+        },
+        {
+          "name": "Cultural district / museum precinct",
+          "desc": "Cultural setting enabling experimental and curatorial framing."
+        }
+      ]
+    },
+    {
+      "name": "Interaction Model",
+      "desc": "Mode of audience engagement and participation.",
+      "options": [
+        {
+          "name": "Passive viewing",
+          "desc": "No direct input; audience experiences are curated by designers."
+        },
+        {
+          "name": "Audience input via devices",
+          "desc": "Content influenced by user input through mobile devices or sensors."
+        },
+        {
+          "name": "Live performer input",
+          "desc": "Performers or operators actively steer visuals in real-time."
+        },
+        {
+          "name": "Sensor-driven reactive",
+          "desc": "Visuals respond to crowd movement, ambient data, or environmental sensors."
+        }
+      ]
+    },
+    {
+      "name": "Content Theme",
+      "desc": "Narrative or thematic content expressed by the work.",
+      "options": [
+        {
+          "name": "Fashion/events",
+          "desc": "Themes around fashion, retail, nightlife, and event aesthetics."
+        },
+        {
+          "name": "Public life / daily life",
+          "desc": "Urban life, street activity, and social interactions."
+        },
+        {
+          "name": "Art/sculpture",
+          "desc": "Abstract or figurative art forms and sculpture-inspired visuals."
+        },
+        {
+          "name": "City data visualization",
+          "desc": "Dynamic visualization of city metrics, datasets, or live feeds."
+        },
+        {
+          "name": "Biophilia / wellbeing",
+          "desc": "Nature-inspired patterns and environments aimed at wellbeing."
+        }
+      ]
+    },
+    {
+      "name": "Temporal Strategy",
+      "desc": "Timing and duration of content presentation.",
+      "options": [
+        {
+          "name": "Day/night adaptive",
+          "desc": "Content adapts to daylight and ambient light levels."
+        },
+        {
+          "name": "Event-based",
+          "desc": "Schedule aligned with events, seasons, or performances."
+        },
+        {
+          "name": "Long-running / ongoing",
+          "desc": "Persistent installation with evolving visuals over time."
+        },
+        {
+          "name": "On-demand viewer selection",
+          "desc": "Viewers choose sequences/content via interface."
+        }
+      ]
+    },
+    {
+      "name": "Data & Content Governance",
+      "desc": "Sources and governance of content used in visuals.",
+      "options": [
+        {
+          "name": "Open city datasets",
+          "desc": "Utilize publicly available city datasets for visualization."
+        },
+        {
+          "name": "Partner-provided data",
+          "desc": "Collaborations with institutions providing datasets."
+        },
+        {
+          "name": "Public input with moderation",
+          "desc": "Incorporate community content with moderation."
+        },
+        {
+          "name": "Sensor/anonymized data",
+          "desc": "Use anonymized sensor data to protect privacy."
+        }
+      ]
+    }
+  ]
+}
