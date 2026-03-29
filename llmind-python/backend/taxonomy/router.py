@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.taxonomy.service import TaxonomyServiceError, generate_taxonomy as generate_taxonomy_service
 from utils.modes import BackendMode, ContentMode
@@ -17,10 +17,15 @@ class GenerateTaxonomyRequest(BaseModel):
     num_reflections: int = Field(default=1, ge=1)
     content_mode: ContentMode = ContentMode.details
     ids_file: Optional[str] = Field(default=None, min_length=1)
-    model_name: str = Field(default="gpt-5-nano-2025-08-07", min_length=1)
-    reasoning_effort: str = Field(default="medium", min_length=1)
+    reasoning_effort: Literal["low", "medium", "high"] = "medium"
     mode: BackendMode = BackendMode.openai
-    base_url: Optional[str] = Field(default=None, min_length=1)
+
+    @field_validator("ids_file")
+    @classmethod
+    def reject_path_traversal(cls, v: str | None) -> str | None:
+        if v and (v.startswith("/") or ".." in v):
+            raise ValueError("ids_file must be a simple filename, not an absolute or traversal path")
+        return v
 
 
 class OptionResponse(BaseModel):
@@ -50,10 +55,8 @@ def generate_taxonomy(payload: GenerateTaxonomyRequest) -> GenerateTaxonomyRespo
             num_reflections=payload.num_reflections,
             content_mode=payload.content_mode,
             ids_file=payload.ids_file,
-            model_name=payload.model_name,
             reasoning_effort=payload.reasoning_effort,
             mode=payload.mode,
-            base_url=payload.base_url,
         )
         aspects = [
             AspectResponse(

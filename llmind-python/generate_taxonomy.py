@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import os
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol
 from datetime import datetime
@@ -15,6 +15,22 @@ from utils.modes import BackendMode, ContentMode
 from utils.clients import build_openai_client, build_vllm_client
 
 TAXONOMY_DIR = settings.taxonomy_dir
+logger = logging.getLogger(__name__)
+
+
+class TaxonomyGenerationError(RuntimeError):
+    """Structured failure for taxonomy generation internals."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        stage: str,
+        context: Dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.context = context or {}
 
 
 # =============================
@@ -104,28 +120,72 @@ class OpenAIChat:
         }
 
     def send_message(self, content: str) -> Taxonomy:
-        self._messages.append({"role": "user", "content": content})
+        import openai
+        from pydantic import ValidationError
+
+        outgoing = [*self._messages, {"role": "user", "content": content}]
 
         if self.base_url:
             # vLLM: standard chat.completions with a manually strictified schema
-            completion = self._client.chat.completions.create(
-                model=self.model,
-                messages=self._messages,
-                response_format=self._vllm_response_format,
-            )
+            try:
+                completion = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=outgoing,
+                    response_format=self._vllm_response_format,
+                )
+            except openai.APIError as exc:
+                raise TaxonomyGenerationError(
+                    "Failed to call vLLM chat completion.",
+                    stage="provider_request",
+                    context={
+                        "provider": "vllm",
+                        "model": self.model,
+                        "base_url": self.base_url,
+                    },
+                ) from exc
+
             raw: str = completion.choices[0].message.content or ""
-            taxonomy = Taxonomy.model_validate_json(raw)
+            try:
+                taxonomy = Taxonomy.model_validate_json(raw)
+            except ValidationError as exc:
+                raise TaxonomyGenerationError(
+                    "Failed to validate vLLM taxonomy JSON response.",
+                    stage="provider_response_validation",
+                    context={
+                        "provider": "vllm",
+                        "model": self.model,
+                        "response_length": len(raw),
+                    },
+                ) from exc
         else:
             # OpenAI: beta.parse handles strict schema transformation automatically
-            completion = self._client.beta.chat.completions.parse(
-                model=self.model,
-                messages=self._messages,
-                response_format=Taxonomy,
-                reasoning_effort=self.reasoning_effort,
-            )
+            try:
+                completion = self._client.beta.chat.completions.parse(
+                    model=self.model,
+                    messages=outgoing,
+                    response_format=Taxonomy,
+                    reasoning_effort=self.reasoning_effort,
+                )
+            except openai.APIError as exc:
+                raise TaxonomyGenerationError(
+                    "Failed to call OpenAI structured parse endpoint.",
+                    stage="provider_request",
+                    context={
+                        "provider": "openai",
+                        "model": self.model,
+                        "reasoning_effort": self.reasoning_effort,
+                    },
+                ) from exc
             taxonomy = completion.choices[0].message.parsed
+            if taxonomy is None:
+                raise TaxonomyGenerationError(
+                    "OpenAI response did not include a parsed taxonomy payload.",
+                    stage="provider_response_validation",
+                    context={"provider": "openai", "model": self.model},
+                )
 
-        self._messages.append({"role": "assistant", "content": taxonomy.model_dump_json()})
+        # Only persist messages after both API call and validation succeed
+        self._messages = [*outgoing, {"role": "assistant", "content": taxonomy.model_dump_json()}]
         return taxonomy
 
 
@@ -184,13 +244,13 @@ def run_generate(
 
 def generate_taxonomy(
     project_overview_input: str,
-    ids_file: Path,
+    ids_file: Path | None,
     num_reflections: int,
     content_mode: ContentMode,
-    model_name: str = "gpt-5-nano-2025-08-07",
+    model_name: str | None = None,
     reasoning_effort: str = "medium",
     mode: BackendMode = BackendMode.openai,
-    base_url: str | None = settings.vllm_base_url, 
+    base_url: str | None = None,
 ) -> Taxonomy:
     """Generate a taxonomy using an OpenAI-compatible model with structured output.
 
@@ -207,24 +267,46 @@ def generate_taxonomy(
 
     artefacts: List[Dict[str, Any]] = []
 
-    if os.exists(ids_file):
+    if ids_file is not None and ids_file.exists():
         try:
             artefacts = build_artefacts(
-                source="selected" if ids_file else "all_supabase",
+                source="selected",
                 ids_file=ids_file,
                 content_mode=content_mode,
-                max_projects=50 if ids_file is None else None,
+                max_projects=None,
             )
-            label = "selected" if ids_file is not None else "all-rows"
-            typer.echo(f"Loaded {len(artefacts)} artefacts from Supabase ({label}).")
+            typer.echo(f"Loaded {len(artefacts)} artefacts from Supabase (selected).")
         except Exception as exc:
             typer.secho(f"Warning: failed to build artefacts: {exc}", fg=typer.colors.YELLOW)
-    else:
-        return Taxonomy(aspects=[])  # Return empty taxonomy if ids_file doesn't exist
+            logger.exception(
+                "taxonomy.generate artefact build failed; continuing with empty artefacts",
+                extra={
+                    "stage": "artefact_build",
+                    "ids_file": str(ids_file),
+                    "content_mode": content_mode.value,
+                },
+            )
+    elif ids_file is not None:
+        raise TaxonomyGenerationError(
+            f"ids_file '{ids_file}' was provided but does not exist.",
+            stage="input_validation",
+            context={"ids_file": str(ids_file)},
+        )
+    # ids_file is None → proceed with empty artefacts
 
     resolved_base_url = base_url if mode == BackendMode.vllm else None
     backend_label = f"vLLM @ {base_url}" if mode == BackendMode.vllm else "OpenAI"
     typer.echo(f"Backend: {backend_label}  |  Model: {model_name}")
+    logger.info(
+        "taxonomy.generate provider selected",
+        extra={
+            "stage": "provider_select",
+            "mode": mode.value,
+            "model_name": model_name,
+            "base_url": resolved_base_url,
+            "artefact_count": len(artefacts),
+        },
+    )
 
     chat = OpenAIChat(
         model=model_name,

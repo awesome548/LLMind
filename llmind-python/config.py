@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # ── vLLM (local embeddings) ───────────────────────────────────────────────
     vllm_base_url: str = "http://100.73.44.12:8001/v1"
+    vllm_model: str = "qwen"
     vllm_embed_model: str = "BAAI/bge-small-en-v1.5"
 
     # ── Scraper ───────────────────────────────────────────────────────────────
