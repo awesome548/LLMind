@@ -223,26 +223,30 @@ export default function MindmapPage() {
   return (
     <main className="relative flex h-screen w-full flex-col overflow-hidden bg-background">
       {/* Floating Navigator (Bottom) */}
-      <header className="absolute bottom-8 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-3xl -translate-x-1/2 items-center justify-between rounded-full border bg-background/80 px-4 py-2 shadow-xl backdrop-blur-md transition-all hover:bg-background/90">
-        <div className="flex items-center gap-2.5">
-          <div className="rounded-full bg-primary/10 p-1.5">
-            <Brain className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-sm font-bold tracking-tight">LLMind</h1>
-          </div>
-          <Separator orientation="vertical" className="mx-1 h-4" />
+      <header className="absolute bottom-8 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-4xl -translate-x-1/2 grid-cols-3 items-center rounded-full border bg-background/80 px-4 py-2 shadow-xl backdrop-blur-md transition-all hover:bg-background/90">
+        <div className="flex items-center justify-start">
+          <Link
+            href="/"
+            className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-muted-foreground transition-all hover:bg-muted hover:text-foreground active:scale-95"
+          >
+            <Home className="h-4 w-4" />
+            Home
+          </Link>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-center">
+          <h1 className="text-xs font-black tracking-[0.2em] uppercase">LLMind</h1>
+        </div>
+
+        <div className="flex items-center justify-end gap-3">
           <Button
             type="button"
             variant="outline"
             size="sm"
             onClick={() => setTaxonomyDialogOpen(true)}
-            className="h-8 gap-1.5 rounded-full px-4 text-xs font-semibold shadow-sm"
+            className="h-9 gap-2 rounded-full px-5 text-xs font-bold shadow-sm transition-all hover:bg-accent hover:text-accent-foreground active:scale-95"
           >
-            <Sparkles className="h-3.5 w-3.5" />
+            <Sparkles className="h-4 w-4 text-primary" />
             Generate Taxonomy
           </Button>
           <Button
@@ -250,23 +254,15 @@ export default function MindmapPage() {
             size="sm"
             onClick={() => setGenerateNodesDialogOpen(true)}
             disabled={isGeneratingNodes || isFetching}
-            className="h-8 gap-1.5 rounded-full px-4 text-xs font-semibold shadow-sm"
+            className="h-9 gap-2 rounded-full px-5 text-xs font-bold shadow-sm transition-all active:scale-95"
           >
             {isGeneratingNodes ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <Zap className="h-3.5 w-3.5 fill-current" />
+              <Zap className="h-4 w-4 fill-current" />
             )}
             {isGeneratingNodes ? 'Generating...' : 'Generate Nodes'}
           </Button>
-          <Separator orientation="vertical" className="mx-1 h-4" />
-          <Link
-            href="/"
-            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <Home className="h-3.5 w-3.5" />
-            Home
-          </Link>
         </div>
       </header>
 
