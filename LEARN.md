@@ -6,6 +6,46 @@
 
 ---
 
+## 🚀 Quick Launch
+
+Two terminals — **open them fresh** so newly installed tools (`uv`, `bun`) are on your PATH. If a command says *"not recognized,"* the terminal was opened before the tool was installed → just open a new one.
+
+### Prerequisites (one-time)
+- **uv** (Python runner): `python -m pip install --upgrade uv`
+- **Bun** (frontend): `winget install Oven-sh.Bun` — *or* skip Bun and use Node (`npx`, see below)
+- For the **fully-local / offline** setup (no OpenAI), have **LM Studio** running with a chat model and an embedding model loaded, and follow [Section 11](#11-connecting-a-local-llm-replacing-the-openai-api). Then build the search index once:
+  ```powershell
+  cd llmind-python
+  uv run python build_local_index.py      # scrape + embed corpus locally → data/local_index.npz
+  ```
+
+### Terminal 1 — Backend (FastAPI)
+```powershell
+cd llmind-python
+uv run fastapi dev backend/main.py        # → http://localhost:8000  (API docs at /docs)
+```
+
+### Terminal 2 — Frontend (Next.js)
+```powershell
+cd llmind-web
+bun install                               # first time only
+bun dev                                   # → http://localhost:3000/mindmap
+```
+
+**If `bun` errors or isn't recognized** (and you have Node installed), use Node directly — this bypasses the Bun-only npm script:
+```powershell
+cd llmind-web
+npm install                               # first time only
+npx next dev                              # → http://localhost:3000/mindmap
+```
+
+> **Common gotchas**
+> - *"Another next dev server is already running"* → port 3000 is taken by a previous run. Stop it (the message prints the `taskkill /PID … /F` command) or close that terminal.
+> - Backend `502` errors → check the uvicorn logs / `e.__cause__`; the 502 masks the real error (see [§8.6](#86-error-handling--the-502-pattern)).
+> - In **local mode**, keep LM Studio open; the first request to each model is slow while it loads, then fast. The Generate dialogs default to **vLLM**.
+
+---
+
 ## Table of Contents
 
 1. [What Is LLMind?](#1-what-is-llmind)
