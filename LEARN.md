@@ -52,11 +52,18 @@
     - [10.1 Supabase Vector Search (pgvector)](#101-supabase-vector-search-pgvector)
     - [10.2 Database Schema & Migrations](#102-database-schema--migrations)
     - [10.3 OpenAI Structured Outputs Constraints](#103-openai-structured-outputs-constraints)
-    - [10.4 vLLM — Running Models Locally](#104-vllm--running-models-locally)
+    - [10.4 vLLM & OpenAI-Compatible Servers](#104-vllm--openai-compatible-servers)
     - [10.5 UMAP + KMeans Dimensionality Reduction](#105-umap--kmeans-dimensionality-reduction)
     - [10.6 Immutable Tree Updates in React](#106-immutable-tree-updates-in-react)
-11. [Hands-On Exercises](#11-hands-on-exercises)
-12. [Further Reading](#12-further-reading)
+11. **[Connecting a Local LLM (Replacing the OpenAI API)](#11-connecting-a-local-llm-replacing-the-openai-api)**
+    - [11.1 How LLMind Talks to Models](#111-how-llmind-talks-to-models)
+    - [11.2 What `mode = vllm` Actually Switches](#112-what-mode--vllm-actually-switches)
+    - [11.3 Case A — A Local LLM on Windows](#113-case-a--a-local-llm-on-windows)
+    - [11.4 Case B — A Remote Linux vLLM Server over SSH](#114-case-b--a-remote-linux-vllm-server-over-ssh)
+    - [11.5 Embedding Dimensions — The 384 vs 1536 Trap](#115-embedding-dimensions--the-384-vs-1536-trap)
+    - [11.6 Verifying & Troubleshooting](#116-verifying--troubleshooting)
+12. [Hands-On Exercises](#12-hands-on-exercises)
+13. [Further Reading](#13-further-reading)
 
 ---
 
@@ -1292,29 +1299,24 @@ print(YourModel.model_json_schema())
 
 ---
 
-### 10.4 vLLM — Running Models Locally
+### 10.4 vLLM & OpenAI-Compatible Servers
 
-vLLM is a fast inference engine for running LLMs locally. LLMind supports it as an alternative to OpenAI:
+The single most important thing to understand about LLMind's "local model" support is that **it is not vLLM-specific.** The whole mechanism is one function:
 
-```bash
-# Start a local embedding server
-vllm serve BAAI/bge-small-en-v1.5 --task embed
-
-# Start a local generation server
-vllm serve meta-llama/Llama-3.1-8B-Instruct
-```
-
-The system uses the OpenAI-compatible client pointing at the local URL:
 ```python
 def build_vllm_client(base_url: str) -> OpenAI:
     return OpenAI(api_key="vllm", base_url=base_url)
 ```
 
-The difference propagates through the system via enums:
-- `BackendMode.vllm` → `embedding_local` column → `VECTOR(384)` dimensions
-- `BackendMode.openai` → `embedding_cloud` column → `VECTOR(1536)` dimensions
+It builds the *same* `OpenAI` client object the cloud path uses — it just points it at a different URL. Because the OpenAI Python SDK speaks a standard HTTP protocol (`POST /v1/chat/completions`, `POST /v1/embeddings`), **any server that implements that protocol works**: vLLM, Ollama, LM Studio, llama.cpp's server, text-generation-webui, LocalAI, and others. The `"vllm"` name is historical — read it as "any OpenAI-compatible endpoint."
 
-**When to use vLLM:** When you want to avoid API costs, work offline, or need to use custom/fine-tuned models.
+The choice propagates through the system via the `BackendMode` enum:
+- `BackendMode.vllm` → `build_vllm_client(base_url)` → embeddings go in the `embedding_local` column → `VECTOR(384)`
+- `BackendMode.openai` → `build_openai_client()` → embeddings go in the `embedding_cloud` column → `VECTOR(1536)`
+
+**When to use a local model:** to avoid API costs, work offline / keep data on-prem, or run a custom/fine-tuned model.
+
+> 📖 **Full setup walkthrough — including a local model on Windows and a remote Linux vLLM server over SSH — is in [Section 11](#11-connecting-a-local-llm-replacing-the-openai-api).**
 
 ---
 
@@ -1383,7 +1385,243 @@ function insertChildrenAtNode(
 
 ---
 
-## 11. Hands-On Exercises
+## 11. Connecting a Local LLM (Replacing the OpenAI API)
+
+By default LLMind sends every generation and embedding request to OpenAI's cloud API. This section shows how to point it at a model you run yourself instead — first on your **local Windows machine**, then on a **remote Linux server running vLLM** that you reach over SSH.
+
+You do **not** need to touch any code. Everything is driven by a handful of environment variables and a `mode` flag.
+
+---
+
+### 11.1 How LLMind Talks to Models
+
+Every LLM call in the backend goes through one of two client factories in [`utils/clients.py`](llmind-python/utils/clients.py):
+
+```python
+def build_openai_client() -> OpenAI:
+    return OpenAI(api_key=settings.openai_api_key)            # cloud
+
+def build_vllm_client(base_url: str) -> OpenAI:
+    return OpenAI(api_key="vllm", base_url=base_url)          # local / remote
+```
+
+Both return the **same `OpenAI` SDK object** — the only difference is `base_url`. Any server that speaks the OpenAI HTTP protocol (`/v1/chat/completions`, `/v1/embeddings`) can stand in:
+
+| Server | Runs on Windows natively? | Notes |
+|---|---|---|
+| **Ollama** | ✅ Yes | Easiest on Windows. Endpoint: `http://localhost:11434/v1` |
+| **LM Studio** | ✅ Yes | GUI + one-click server at `http://localhost:1234/v1` |
+| **llama.cpp** (`llama-server`) | ✅ Yes | Lightweight, GGUF models |
+| **vLLM** | ❌ No (Linux + NVIDIA GPU) | Fastest for serving; use a remote Linux box or WSL2 |
+
+> ⚠️ **vLLM does not run on native Windows.** It requires Linux and a CUDA GPU. On Windows, use Ollama / LM Studio / llama.cpp, or run vLLM inside WSL2 or on a remote server (§11.4).
+
+Three configuration knobs control where requests go — all in `llmind-python/.env`:
+
+```bash
+VLLM_BASE_URL=http://localhost:11434/v1   # the OpenAI-compatible endpoint
+VLLM_MODEL=qwen2.5:7b-instruct            # chat/generation model name
+VLLM_EMBED_MODEL=BAAI/bge-small-en-v1.5   # embedding model name (pipeline only)
+```
+
+To *select* the local backend at request time you pass `mode: "vllm"` — either from the frontend dialogs (the **Generate Taxonomy** and **Generate Nodes** dialogs both have an "openai / vllm" dropdown) or directly in the API payload. When `mode = "vllm"`, the backend reads `VLLM_BASE_URL` and `VLLM_MODEL` from your `.env` automatically (see [`taxonomy/service.py`](llmind-python/backend/taxonomy/service.py)).
+
+---
+
+### 11.2 What `mode = vllm` Actually Switches
+
+This is the part most people get wrong, so be precise about it. `mode = "vllm"` only redirects the **chat/generation** calls. Here is the full map:
+
+| Operation | Honors `mode=vllm`? | Where it goes |
+|---|---|---|
+| Taxonomy generation (`POST /api/taxonomy/generate`) | ✅ Yes | `VLLM_BASE_URL`, model `VLLM_MODEL` |
+| Node generation (`POST /api/related-projects/generate-nodes`) | ✅ Yes | `VLLM_BASE_URL` (or per-request `base_url`) |
+| Pipeline embeddings (`ingest` / `cluster` / `farthest` with `--embed-mode vllm`) | ✅ Yes | `--vllm-base-url`, stored in `embedding_local` `VECTOR(384)` |
+| **Related-projects search embedding** (`POST /api/related-projects/search`) | ❌ **No** | **Always OpenAI cloud** |
+
+> 🔑 **The search gotcha.** `search_related_projects()` in [`related_projects/service.py:216`](llmind-python/backend/related_projects/service.py:216) is hardcoded to `build_openai_client()`. It embeds the search query with OpenAI **regardless of `mode`**. So even in "local" mode, the *related projects* panel still needs a valid `OPENAI_API_KEY` — unless you skip Supabase entirely by sending `should_query_supabase: false`.
+>
+> To go **fully local** for search as well, you'd have to edit that function to branch on `BackendMode` (the same way node generation does) and re-embed your corpus locally so the stored vectors match the query model's dimensions. That's a code change, not a config change.
+
+**Bottom line for a no-code-change setup:** local generation works out of the box; keep `OPENAI_API_KEY` set for the search panel, or bypass search with `should_query_supabase: false`.
+
+---
+
+### 11.3 Case A — A Local LLM on Windows
+
+Goal: run the chat model on your own machine, no cloud generation calls. We'll use **Ollama** (simplest), with notes for LM Studio.
+
+**Step 1 — Install and pull a model**
+
+Install Ollama for Windows from [ollama.com](https://ollama.com/download), then:
+
+```powershell
+ollama pull qwen2.5:7b-instruct      # chat model (good JSON adherence)
+ollama serve                          # starts the server (usually already running)
+```
+
+Ollama exposes an OpenAI-compatible API at `http://localhost:11434/v1`.
+
+**Step 2 — Point LLMind at it**
+
+Edit `llmind-python/.env`:
+
+```bash
+VLLM_BASE_URL=http://localhost:11434/v1
+VLLM_MODEL=qwen2.5:7b-instruct
+# Keep OPENAI_API_KEY set — the related-projects search still uses it (see §11.2)
+OPENAI_API_KEY=sk-...
+```
+
+**Step 3 — Restart the backend and select the local backend**
+
+```bash
+cd llmind-python
+uv run fastapi dev backend/main.py
+```
+
+Then either:
+- **From the UI:** open the **Generate Taxonomy** or **Generate Nodes** dialog and choose **vllm** in the backend dropdown, or
+- **From the API:** set `"mode": "vllm"` in the request body.
+
+**Step 4 — Smoke test (no Supabase needed)**
+
+```powershell
+curl -X POST 'http://localhost:8000/api/taxonomy/generate' `
+  -H 'Content-Type: application/json' `
+  -d '{\"project_overview\":\"A modular interactive light installation for a public square.\",\"mode\":\"vllm\"}'
+```
+
+**LM Studio alternative:** load a model in LM Studio, click **Start Server** (Local Server tab). It serves at `http://localhost:1234/v1`. Set `VLLM_BASE_URL=http://localhost:1234/v1` and `VLLM_MODEL` to the model identifier LM Studio shows.
+
+> 🧩 **Structured-output support matters.** LLMind's vLLM path sends a strict JSON-schema `response_format` (see [`generate_taxonomy.py`](llmind-python/generate_taxonomy.py) `_make_strict_schema`). Pick a server/model that honors `response_format: json_schema`: recent Ollama (≥ 0.5), LM Studio, and vLLM all do. If responses fail validation, the model isn't returning schema-conformant JSON — switch to a stronger instruct model or a server with constrained decoding.
+
+---
+
+### 11.4 Case B — A Remote Linux vLLM Server over SSH
+
+Goal: run vLLM on a GPU Linux box (lab server, cloud VM) and drive it from your Windows dev machine. This is what the shipped default already assumes — `VLLM_BASE_URL=http://100.73.44.12:8001/v1` is a Tailscale address pointing at such a server.
+
+**Step 1 — On the Linux server: install and serve**
+
+```bash
+# Requires Linux + NVIDIA GPU + CUDA
+uv pip install vllm        # or: pip install vllm
+
+# Chat/generation server. --served-model-name sets the name clients must request.
+vllm serve Qwen/Qwen2.5-7B-Instruct \
+  --host 0.0.0.0 --port 8001 \
+  --served-model-name qwen \
+  --gpu-memory-utilization 0.90 \
+  --max-model-len 8192
+
+# (Optional) a separate embedding server on another port, if you also embed locally
+vllm serve BAAI/bge-small-en-v1.5 --task embed --host 0.0.0.0 --port 8002
+```
+
+Run these under **tmux** or **systemd** so they survive your SSH session closing:
+
+```bash
+tmux new -s vllm
+# start vllm here, then detach with Ctrl-b d
+```
+
+**Step 2 — Reach the server from Windows**
+
+You have two safe options. **Do not expose vLLM directly on the public internet** — it has no authentication.
+
+**Option 1 — SSH tunnel (recommended).** Forward the remote ports to your local machine:
+
+```powershell
+# Maps localhost:8001 -> server:8001 (and 8002 for embeddings). -N = no shell, just forward.
+ssh -N -L 8001:localhost:8001 -L 8002:localhost:8002 user@your-server.example.com
+```
+
+Leave that window open. Then in `.env`, point at the **local** end of the tunnel:
+
+```bash
+VLLM_BASE_URL=http://localhost:8001/v1
+VLLM_MODEL=qwen          # must match --served-model-name
+OPENAI_API_KEY=sk-...    # still needed for related-projects search (§11.2)
+```
+
+**Option 2 — Tailscale / private VPN.** If the server is on your tailnet, skip the tunnel and point straight at its tailnet IP (this is the existing default style):
+
+```bash
+VLLM_BASE_URL=http://100.73.44.12:8001/v1
+VLLM_MODEL=qwen
+```
+
+**Step 3 — Restart the backend and use `mode: "vllm"`** — identical to Case A, Steps 3–4.
+
+> 💡 **Keeping the tunnel alive.** For an always-on link, add to your `~/.ssh/config`:
+> ```
+> Host vllm-server
+>     HostName your-server.example.com
+>     User you
+>     LocalForward 8001 localhost:8001
+>     LocalForward 8002 localhost:8002
+>     ServerAliveInterval 60
+> ```
+> Then just `ssh -N vllm-server`.
+
+---
+
+### 11.5 Embedding Dimensions — The 384 vs 1536 Trap
+
+This only matters if you also want **local embeddings** (the data pipeline, `--embed-mode vllm`), not just local chat.
+
+The database has two embedding columns, sized for specific models:
+
+| Backend | Column | Dimensions | Default model |
+|---|---|---|---|
+| `openai` | `embedding_cloud` | **1536** | `text-embedding-3-small` |
+| `vllm` | `embedding_local` | **384** | `BAAI/bge-small-en-v1.5` |
+
+The `embedding_local` column is `VECTOR(384)` — it fits `bge-small-en-v1.5` exactly. If you serve a **different** embedding model (e.g. `bge-m3` is 1024-dim, `nomic-embed-text` is 768-dim), the dimensions won't match and inserts will fail.
+
+To switch local embedding models you must, in order:
+1. Set `VLLM_EMBED_MODEL` (and `--vllm-model` on the CLI) to the new model.
+2. Change `VECTOR(384)` to the new dimension in [`migrations/media_doc_tables.sql`](llmind-python/migrations/media_doc_tables.sql) (and the migration file), and re-run the migration.
+3. Re-run `uv run python database_pipeline.py ingest --embed-mode vllm` to repopulate `embedding_local`.
+
+If you only need **local generation** (taxonomy + nodes) and are happy to keep search on OpenAI, you can ignore this entire subsection.
+
+---
+
+### 11.6 Verifying & Troubleshooting
+
+**Confirm the server is reachable and the model name is right:**
+
+```powershell
+curl http://localhost:8001/v1/models     # or :11434 for Ollama, :1234 for LM Studio
+```
+
+The `id` in the response is exactly what `VLLM_MODEL` must be set to.
+
+**One-line backend sanity check (bypasses Supabase):**
+
+```bash
+cd llmind-python
+uv run python -c "from utils.clients import build_vllm_client; from config import settings; c=build_vllm_client(settings.vllm_base_url); print(c.chat.completions.create(model=settings.vllm_model, messages=[{'role':'user','content':'reply with OK'}]).choices[0].message.content)"
+```
+
+**Common failures:**
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `502` with `provider: vllm` in detail | Server unreachable / wrong `VLLM_BASE_URL` / tunnel not open | `curl …/v1/models`; check the SSH tunnel window is still open |
+| `502`, model-not-found | `VLLM_MODEL` ≠ the served model name | Match `VLLM_MODEL` to `--served-model-name` (or the `/v1/models` id) |
+| Validation / JSON parse error | Server didn't honor strict `json_schema` | Use a server/model with structured-output support (§11.3 note) |
+| Insert fails with dimension mismatch | Local embedding model ≠ 384 dims | Resize the `VECTOR` column (§11.5) and re-ingest |
+| Related projects still hit OpenAI / fail without key | Search embedding is always OpenAI | Set `OPENAI_API_KEY`, or send `should_query_supabase: false` (§11.2) |
+| `Missing required environment variable: OPENAI_API_KEY` | Search path needs the key even in local mode | Set `OPENAI_API_KEY`, or bypass search as above |
+
+> **Reminder:** a `502` masks the real error. Check the uvicorn logs or `e.__cause__` for the original exception before assuming the server is down — see [§8.6](#86-error-handling--the-502-pattern).
+
+---
+
+## 12. Hands-On Exercises
 
 ### Beginner
 
@@ -1405,24 +1643,32 @@ function insertChildrenAtNode(
 
 6. **Explore the Zustand store:** Compare the `mindmap-store.ts` `partialize` function with the full state interface. Why are some fields excluded from persistence?
 
+7. **Go local:** Following [§11.3](#113-case-a--a-local-llm-on-windows), install Ollama, set `VLLM_BASE_URL`/`VLLM_MODEL`, and generate a taxonomy with `"mode": "vllm"`. Then trace *why* the related-projects panel still calls OpenAI ([§11.2](#112-what-mode--vllm-actually-switches)) — find the hardcoded `build_openai_client()` and sketch the change that would make search local too.
+
 ### Advanced
 
-7. **Database schema:** Read the SQL files in `migrations/`. Draw a diagram of the tables and their relationships. How does the `ON DELETE CASCADE` constraint work between `media_doc` and the embedding tables?
+8. **Database schema:** Read the SQL files in `migrations/`. Draw a diagram of the tables and their relationships. How does the `ON DELETE CASCADE` constraint work between `media_doc` and the embedding tables?
 
-8. **Error debugging:** The `ServiceError` pattern wraps all external call errors. Add a logging statement in `service.py` that prints the original error before wrapping it. Why is the `from exc` chain important for debugging?
+9. **Error debugging:** The `ServiceError` pattern wraps all external call errors. Add a logging statement in `service.py` that prints the original error before wrapping it. Why is the `from exc` chain important for debugging?
 
-9. **Custom embedding model:** What would you need to change to switch from OpenAI's `text-embedding-3-small` (1536 dims) to a local model with 384 dimensions? (Hint: config, `EMB_COLUMN_MAP`, and the migration SQL.)
+10. **Custom embedding model:** What would you need to change to switch from OpenAI's `text-embedding-3-small` (1536 dims) to a local model with 384 dimensions? (Hint: config, `EMB_COLUMN_MAP`, and the migration SQL — and see [§11.5](#115-embedding-dimensions--the-384-vs-1536-trap).)
 
-10. **Add a new feature:** Design (in pseudocode) how you would add a "save taxonomy to Supabase" feature that persists the user's mind map modifications. Which files would you create or modify?
+11. **Add a new feature:** Design (in pseudocode) how you would add a "save taxonomy to Supabase" feature that persists the user's mind map modifications. Which files would you create or modify?
 
 ---
 
-## 12. Further Reading
+## 13. Further Reading
 
 ### AI & Embeddings
 - [OpenAI Embeddings Guide](https://platform.openai.com/docs/guides/embeddings) — How text embeddings work
 - [OpenAI Structured Outputs](https://platform.openai.com/docs/guides/structured-outputs) — Forcing JSON responses
 - [UMAP Explained](https://umap-learn.readthedocs.io/en/latest/how_umap_works.html) — Visual guide to dimensionality reduction
+
+### Local & Self-Hosted Models
+- [vLLM — OpenAI-Compatible Server](https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html) — Serving models with `vllm serve`
+- [Ollama OpenAI Compatibility](https://github.com/ollama/ollama/blob/main/docs/openai.md) — The `/v1` endpoint LLMind talks to
+- [LM Studio Local Server](https://lmstudio.ai/docs/app/api) — One-click OpenAI-compatible server on Windows
+- [SSH Port Forwarding](https://www.ssh.com/academy/ssh/tunneling/example) — How the `-L` tunnel in §11.4 works
 
 ### Python
 - [FastAPI Tutorial](https://fastapi.tiangolo.com/tutorial/) — Building APIs in Python
