@@ -46,7 +46,7 @@ export function GenerateNodesDialog({
   const [step, setStep] = useState<Step>('form');
   const [additionalContext, setAdditionalContext] = useState('');
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('medium');
-  const [mode, setMode] = useState<BackendMode>('openai');
+  const [mode, setMode] = useState<BackendMode>('vllm');
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();

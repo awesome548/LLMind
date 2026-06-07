@@ -12,6 +12,7 @@ from utils.clients import build_openai_client, build_vllm_client
 from utils.modes import BackendMode
 from utils.supabase import get_supabase_client
 from utils.prompts import USER_PROMPT_TEMPLATE, SYSTEM_PROMPT
+from utils.json import extract_message_json
 
 class ServiceError(RuntimeError):
     """Raised when an external dependency or model response fails."""
@@ -110,7 +111,7 @@ def _generate_node_payload(
             ],
             response_format=response_format,
         )
-        raw = completion.choices[0].message.content or ""
+        raw = extract_message_json(completion.choices[0].message)
         return NodeGenerationPayload.model_validate_json(raw)
 
     client = build_openai_client()
@@ -193,6 +194,36 @@ def _format_projects_for_prompt(projects: list[dict[str, Any]]) -> str:
     return "\n\n".join(lines)
 
 
+def _fetch_related_projects_local(
+    *, query: str, limit: int, similarity_threshold: float | None
+) -> list[dict[str, Any]]:
+    """Search the offline npz index, embedding the query with the local model.
+
+    Touches neither Supabase nor OpenAI — used when ``VECTOR_STORE=local``.
+    """
+    from utils import local_store
+
+    threshold = (
+        settings.supabase_similarity_threshold
+        if similarity_threshold is None
+        else similarity_threshold
+    )
+    try:
+        client = build_vllm_client(settings.vllm_base_url)
+        response = client.embeddings.create(
+            model=settings.vllm_embed_model, input=[query]
+        )
+        query_embedding = response.data[0].embedding if response.data else None
+        if not isinstance(query_embedding, list):
+            raise ServiceError("Failed to generate a local embedding for the query.")
+        rows = local_store.search(query_embedding, k=limit, threshold=threshold)
+        return [_extract_related_project({"metadata": row}) for row in rows]
+    except ServiceError:
+        raise
+    except Exception as exc:
+        raise ServiceError("Failed to search the local vector index.") from exc
+
+
 def fetch_related_projects(
     *,
     query: str,
@@ -204,6 +235,11 @@ def fetch_related_projects(
     trimmed_query = query.strip()
     if not trimmed_query:
         return []
+
+    if settings.vector_store == "local":
+        return _fetch_related_projects_local(
+            query=trimmed_query, limit=limit, similarity_threshold=similarity_threshold
+        )
 
     resolved_embedding_model = embedding_model or settings.openai_embed_model
     resolved_match_function = match_function or settings.supabase_match_function

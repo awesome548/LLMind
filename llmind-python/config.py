@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     vllm_model: str = "qwen"
     vllm_embed_model: str = "BAAI/bge-small-en-v1.5"
 
+    # ── Vector store ──────────────────────────────────────────────────────────
+    # "supabase" → pgvector via Supabase RPC; "local" → offline npz index
+    # (built by build_local_index.py, searched with the local embedding model).
+    vector_store: str = "supabase"
+    local_index_path: Path = Path("data") / "local_index.npz"
+
     # ── Scraper ───────────────────────────────────────────────────────────────
     base_url: str = "https://awards.mediaarchitecture.org"
     default_listing_url: str = "https://awards.mediaarchitecture.org/mab/projects/"

@@ -13,6 +13,7 @@ from utils.models import Taxonomy
 from utils.prompts import IDEA_FIRST_PROMPT, IDEA_REFLECTION_PROMPT, SYSTEM_PROMPT
 from utils.modes import BackendMode, ContentMode
 from utils.clients import build_openai_client, build_vllm_client
+from utils.json import extract_message_json
 
 TAXONOMY_DIR = settings.taxonomy_dir
 logger = logging.getLogger(__name__)
@@ -144,7 +145,7 @@ class OpenAIChat:
                     },
                 ) from exc
 
-            raw: str = completion.choices[0].message.content or ""
+            raw: str = extract_message_json(completion.choices[0].message)
             try:
                 taxonomy = Taxonomy.model_validate_json(raw)
             except ValidationError as exc:

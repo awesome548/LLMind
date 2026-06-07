@@ -61,3 +61,25 @@ def extract_json_between_markers(text: str) -> Optional[Dict[str, Any]]:
             return json.loads(candidate2)
         except Exception:
             return None
+
+
+def extract_message_json(message: Any) -> str:
+    """Best-effort JSON string from a chat-completion message.
+
+    Prefers ``message.content``; falls back to ``message.reasoning_content``.
+    Some local reasoning models (e.g. Qwen3 served via LM Studio / vLLM) emit
+    the structured answer in ``reasoning_content`` and leave ``content`` empty.
+    If the text carries extra prose (``<think>`` wrappers, etc.) it is narrowed
+    to the outermost JSON object. Returns a string ready for ``model_validate_json``.
+    """
+    raw = (getattr(message, "content", None) or "").strip()
+    if not raw:
+        raw = (getattr(message, "reasoning_content", None) or "").strip()
+    if not raw:
+        return ""
+    try:
+        json.loads(raw)            # fast path: already pure JSON
+        return raw
+    except Exception:
+        obj = extract_json_between_markers(raw)
+        return json.dumps(obj) if obj is not None else raw

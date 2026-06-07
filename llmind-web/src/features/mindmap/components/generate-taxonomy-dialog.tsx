@@ -39,7 +39,7 @@ export function GenerateTaxonomyDialog({
   const [step, setStep] = useState<Step>('form');
   const [projectOverview, setProjectOverview] = useState('');
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('medium');
-  const [mode, setMode] = useState<BackendMode>('openai');
+  const [mode, setMode] = useState<BackendMode>('vllm');
 
   const { mutate, isPending, error, reset } = useGenerateTaxonomyMutation();
 
