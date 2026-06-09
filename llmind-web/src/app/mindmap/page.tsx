@@ -1,19 +1,31 @@
 'use client';
 
 import {
-  Brain,
   ChevronRight,
+  Grid3x3,
   Home,
   Info,
   Loader2,
+  Network,
   PanelsRightBottom,
   Sparkles,
   Zap,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SimpleMindMap } from '@/src/components/mindmap/simple-mindmap';
 import { SimpleProjectPanel } from '@/src/components/mindmap/simple-project-panel';
+import {
+  DesignSpaceSurface,
+  type GenerationTrail,
+} from '@/src/components/design-space/design-space-surface';
+import { useSurfaceQuery } from '@/src/features/design-space/hooks/use-surface-query';
+import {
+  nodesToLocateItems,
+  useLocateNodesMutation,
+} from '@/src/features/design-space/hooks/use-locate-nodes';
+import { useGenerateAtMutation } from '@/src/features/design-space/hooks/use-generate-at-mutation';
+import type { CoordMap } from '@/src/features/design-space/types';
 import { Badge } from '@/src/components/ui/badge';
 import { Button } from '@/src/components/ui/button';
 import {
@@ -22,7 +34,6 @@ import {
   CollapsibleTrigger,
 } from '@/src/components/ui/collapsible';
 import { ScrollArea } from '@/src/components/ui/scroll-area';
-import { Separator } from '@/src/components/ui/separator';
 import {
   SCHEMA_MINDMAP_NODES,
   SCHEMA_DESCRIPTION_BY_TOPIC,
@@ -126,6 +137,65 @@ function insertChildrenAtNode(
   return { nodes: nextNodes, inserted };
 }
 
+function collectIds(nodes: ReadonlyArray<MindmapNode>, into: Set<string>): void {
+  for (const node of nodes) {
+    into.add(node.id);
+    if (node.children?.length) collectIds(node.children, into);
+  }
+}
+
+/**
+ * Node ids are slugified names (and LLM-supplied ids for generated nodes), so a
+ * newly generated option can collide with an existing node anywhere in the tree
+ * — duplicate ids break React keys (e.g. `n-portable`) and the id→coordinate
+ * mapping in the design space. Remap any colliding child id to a unique one and
+ * report the remap so callers can keep coordinates aligned.
+ */
+function ensureUniqueChildIds(
+  allNodes: ReadonlyArray<MindmapNode>,
+  children: ReadonlyArray<MindmapNode>
+): { children: MindmapNode[]; remap: Record<string, string> } {
+  const used = new Set<string>();
+  collectIds(allNodes, used);
+  const remap: Record<string, string> = {};
+
+  const result = children.map((child) => {
+    let id = child.id;
+    if (used.has(id)) {
+      let n = 2;
+      while (used.has(`${child.id}-${n}`)) n++;
+      id = `${child.id}-${n}`;
+      remap[child.id] = id;
+    }
+    used.add(id);
+    return { ...child, id };
+  });
+
+  return { children: result, remap };
+}
+
+interface AspectRef {
+  id: string;
+  topic: string;
+  lineage: string[];
+}
+
+/** node id → its depth-1 ancestor (the aspect), or null for the root. */
+function buildAspectIndex(
+  nodes: ReadonlyArray<MindmapNode>
+): Map<string, AspectRef | null> {
+  const index = new Map<string, AspectRef | null>();
+  const walk = (node: MindmapNode, lineage: string[], depth: number, aspect: AspectRef | null) => {
+    const nextLineage = [...lineage, node.topic];
+    const myAspect: AspectRef | null =
+      depth === 1 ? { id: node.id, topic: node.topic, lineage: nextLineage } : aspect;
+    index.set(node.id, myAspect);
+    for (const child of node.children ?? []) walk(child, nextLineage, depth + 1, myAspect);
+  };
+  for (const node of nodes) walk(node, [], 0, null);
+  return index;
+}
+
 export default function MindmapPage() {
   const selectTopic = useMindmapStore((state) => state.selectTopic);
   const taxonomy = useMindmapStore((state) => state.taxonomy);
@@ -148,12 +218,55 @@ export default function MindmapPage() {
     [taxonomy]
   );
 
+  // ── Design-space view ──────────────────────────────────────────────────────
+  const [view, setView] = useState<'map' | 'space'>('map');
+  const [coords, setCoords] = useState<CoordMap>({});
+  const [pendingCell, setPendingCell] = useState<[number, number] | null>(null);
+  // The currently-traced connector, and every cell that has generated nodes
+  // (drawn hollow as "discovered"; re-clicking re-traces its line).
+  const [activeLine, setActiveLine] = useState<GenerationTrail | null>(null);
+  const [discoveredMap, setDiscoveredMap] = useState<Map<string, GenerationTrail>>(
+    () => new Map()
+  );
+  const discoveredCells = useMemo(() => new Set(discoveredMap.keys()), [discoveredMap]);
+  const { data: surface } = useSurfaceQuery(true);
+  const { mutateAsync: locateNodes } = useLocateNodesMutation();
+  const { mutateAsync: generateAt, isPending: isGeneratingAt } = useGenerateAtMutation();
+  const locatingRef = useRef(false);
+
+  const attemptedRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (!taxonomy) return;
     const { nodes: nextNodes } = taxonomyToMindmapNodes(taxonomy);
     setNodes(nextNodes);
     setSelection({ topic: INITIAL_SELECTION.topic, lineage: [...INITIAL_SELECTION.lineage] });
+    // New taxonomy → invalidate every design-space coordinate.
+    setCoords({});
+    attemptedRef.current.clear();
   }, [taxonomy]);
+
+  // Best-effort: embed + locate any nodes that lack coordinates. Each node is
+  // attempted at most once per session; failures (e.g. embedding server down)
+  // leave the background surface intact and are retried on the next change.
+  useEffect(() => {
+    if (!surface) return;
+    const items = nodesToLocateItems(nodes, activeDescriptionByTopic).filter(
+      (it) => !coords[it.node_id] && !attemptedRef.current.has(it.node_id)
+    );
+    if (items.length === 0 || locatingRef.current) return;
+
+    locatingRef.current = true;
+    items.forEach((it) => attemptedRef.current.add(it.node_id));
+    locateNodes(items)
+      .then((located) => setCoords((prev) => ({ ...prev, ...located })))
+      .catch(() => {
+        items.forEach((it) => attemptedRef.current.delete(it.node_id));
+      })
+      .finally(() => {
+        locatingRef.current = false;
+      });
+  }, [surface, nodes, activeDescriptionByTopic, coords, locateNodes]);
 
   const description = activeDescriptionByTopic[selection.topic] ?? '';
   const request = buildRequest(selection, description);
@@ -172,7 +285,97 @@ export default function MindmapPage() {
       topic: nextSelection.topic,
       lineage: [...nextSelection.lineage],
     });
+    setActiveLine(null); // a fresh selection clears any traced connector
   };
+
+  const handleGenerateAt = useCallback(
+    async (x: number, y: number) => {
+      if (!surface) return;
+
+      // Spatial intent: attach new options under the ASPECT nearest the clicked
+      // dot — keeps the 2-level structure (options under their branch, matching
+      // color) instead of dumping them under whatever node happens to be selected.
+      const aspectIndex = buildAspectIndex(nodes);
+      let nearestId: string | null = null;
+      let bestDist = Infinity;
+      for (const [id, c] of Object.entries(coords)) {
+        const d = (c.x - x) ** 2 + (c.y - y) ** 2;
+        if (d < bestDist) {
+          bestDist = d;
+          nearestId = id;
+        }
+      }
+      const nearestAspect = nearestId ? aspectIndex.get(nearestId) ?? null : null;
+      const fallback = findNodeByLineage(nodes, selection.lineage);
+      const focusId = nearestAspect?.id ?? fallback?.id;
+      const focusTopic = nearestAspect?.topic ?? fallback?.topic;
+      const focusLineage = nearestAspect?.lineage ?? selection.lineage;
+      if (!focusId || !focusTopic) {
+        setGenerateError('No aspect found nearby to attach generated options to.');
+        return;
+      }
+
+      const resolution = surface.grid.resolution;
+      setPendingCell([Math.floor(x * resolution), Math.floor(y * resolution)]);
+      setGenerateError(null);
+      // Reflect the target aspect in the selection so its region highlights and
+      // its related projects load.
+      setSelection({ topic: focusTopic, lineage: [...focusLineage] });
+
+      try {
+        const response = await generateAt({
+          x,
+          y,
+          allNodes: nodes,
+          focusNode: { id: focusId, topic: focusTopic },
+          lineage: focusLineage,
+        });
+
+        const rawChildren: MindmapNode[] = response.nodes.map((n) => ({
+          id: n.node_id,
+          topic: n.topic,
+        }));
+        const { children, remap } = ensureUniqueChildIds(nodes, rawChildren);
+        const treeUpdate = insertChildrenAtNode(nodes, response.parent_id, children);
+        if (!treeUpdate.inserted) {
+          setGenerateError('Generated nodes were returned, but no matching parent was found.');
+          return;
+        }
+        setNodes(treeUpdate.nodes);
+
+        // Coordinates come back with the generation — no extra /locate call.
+        // Keep them aligned with any ids that were remapped to stay unique.
+        const merged: CoordMap = {};
+        for (const c of response.coords) {
+          const id = remap[c.node_id] ?? c.node_id;
+          merged[id] = { x: c.x, y: c.y, ...(c.z != null ? { z: c.z } : {}) };
+          attemptedRef.current.add(id);
+        }
+        setCoords((prev) => ({ ...prev, ...merged }));
+
+        // Mark the clicked cell "discovered" (drawn hollow) and store + show the
+        // connector to where the nodes landed, so the (often distant) placement is
+        // visibly tied to the click. Re-clicking the hollow dot re-traces it.
+        const targets = Object.values(merged);
+        if (targets.length > 0) {
+          const line: GenerationTrail = {
+            from: { x, y },
+            to: targets.map((c) => ({ x: c.x, y: c.y })),
+          };
+          const cellKey = `${Math.floor(x * resolution)},${Math.floor(y * resolution)}`;
+          setDiscoveredMap((prev) => new Map(prev).set(cellKey, line));
+          setActiveLine(line);
+        }
+      } catch (error) {
+        setGenerateError(
+          error instanceof Error ? error.message : 'Failed to generate at location.'
+        );
+      } finally {
+        setPendingCell(null);
+      }
+    },
+    [surface, nodes, coords, selection, generateAt]
+  );
 
   const handleGenerateNodes = async (
     dialogParams?: Pick<GenerateNodesParams, 'description' | 'mode' | 'reasoningEffort'>
@@ -205,7 +408,10 @@ export default function MindmapPage() {
         reasoningEffort: dialogParams?.reasoningEffort,
       });
 
-      const generatedChildren = generatedNodesToMindmapNodes(response);
+      const { children: generatedChildren } = ensureUniqueChildIds(
+        nodes,
+        generatedNodesToMindmapNodes(response)
+      );
       const treeUpdate = insertChildrenAtNode(nodes, response.parent_id, generatedChildren);
       if (!treeUpdate.inserted) {
         setGenerateError('Generated nodes were returned, but no matching parent was found.');
@@ -235,7 +441,34 @@ export default function MindmapPage() {
         </div>
 
         <div className="flex items-center justify-center">
-          <h1 className="text-xs font-black tracking-[0.2em] uppercase">LLMind</h1>
+          <div className="flex items-center gap-0.5 rounded-full bg-muted/60 p-0.5">
+            <button
+              type="button"
+              onClick={() => setView('map')}
+              aria-pressed={view === 'map'}
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
+                view === 'map'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Network className="h-3.5 w-3.5" />
+              Mind Map
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('space')}
+              aria-pressed={view === 'space'}
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
+                view === 'space'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Grid3x3 className="h-3.5 w-3.5" />
+              Design Space
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center justify-end gap-3">
@@ -326,14 +559,49 @@ export default function MindmapPage() {
         </Collapsible>
       </div>
 
-      {/* Main Mind Map Layer */}
+      {/* Main view layer — mind map and design space share nodes + selection */}
       <div className="relative h-full w-full">
-        <SimpleMindMap
-          nodes={nodes}
-          activeTopic={selection.topic}
-          onSelect={handleSelect}
-          onDataChange={setNodes}
-        />
+        {view === 'space' ? (
+          surface ? (
+            <DesignSpaceSurface
+              surface={surface}
+              nodes={nodes}
+              coords={coords}
+              selection={selection}
+              onSelectNode={handleSelect}
+              onGenerateAt={handleGenerateAt}
+              isGenerating={isGeneratingAt}
+              pendingCell={pendingCell}
+              trail={activeLine}
+              discovered={discoveredCells}
+              onShowDiscovery={(key) => setActiveLine(discoveredMap.get(key) ?? null)}
+              onBackgroundClick={() => {
+                setSelection({ topic: '', lineage: [] });
+                setActiveLine(null);
+              }}
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center p-8 text-center">
+              <p className="max-w-md text-sm text-muted-foreground">
+                Design-space surface unavailable. Build it with{' '}
+                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+                  uv run python database_pipeline.py project
+                </code>{' '}
+                and ensure the backend is running.
+              </p>
+            </div>
+          )
+        ) : (
+          <SimpleMindMap
+            nodes={nodes}
+            activeTopic={selection.topic}
+            onSelect={handleSelect}
+            onDataChange={setNodes}
+            generatingNodeId={
+              isGeneratingNodes ? findNodeByLineage(nodes, selection.lineage)?.id ?? null : null
+            }
+          />
+        )}
       </div>
 
       <GenerateTaxonomyDialog

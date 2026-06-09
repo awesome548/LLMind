@@ -178,6 +178,54 @@ def _format_taxonomy(nodes: Iterable[dict[str, Any]]) -> str:
     return _format_node(_safe_str(root_node.get("id")))
 
 
+def _format_taxonomy_focused(nodes: Iterable[dict[str, Any]], focus_node_id: str) -> str:
+    """Compact, *complete* taxonomy view for node generation.
+
+    Shows the root + every aspect (the 2-level skeleton) and expands the focus
+    aspect's existing options. Unlike a char-truncated full tree, this is always
+    well-formed and bounded regardless of total tree size, so the model reliably
+    sees the structure to follow and the existing options to avoid duplicating.
+    """
+    node_list = [dict(n) for n in nodes]
+    if not node_list:
+        return ""
+
+    by_id = {_safe_str(n.get("id")): n for n in node_list if n.get("id")}
+    children_of: dict[str, list[dict[str, Any]]] = {}
+    for n in node_list:
+        children_of.setdefault(_safe_str(n.get("parentid")), []).append(n)
+
+    root = next((n for n in node_list if n.get("isroot") is True), None) or next(
+        (n for n in node_list if not n.get("parentid")), None
+    )
+    if not root:
+        return ""
+    root_id = _safe_str(root.get("id"))
+
+    # The aspect to expand: the focus itself if it's an aspect, else the focus's
+    # parent aspect (so an option focus still shows its sibling options).
+    focus = by_id.get(focus_node_id)
+    expand_id = focus_node_id
+    if focus is not None and _safe_str(focus.get("parentid")) not in ("", root_id):
+        expand_id = _safe_str(focus.get("parentid"))
+
+    lines = [f"- {_safe_str(root.get('topic'))} ({root_id})"]
+    for aspect in children_of.get(root_id, []):
+        aid = _safe_str(aspect.get("id"))
+        lines.append(f"  - {_safe_str(aspect.get('topic'))} ({aid})")
+        if aid == expand_id:
+            for opt in children_of.get(aid, []):
+                lines.append(f"    - {_safe_str(opt.get('topic'))} ({_safe_str(opt.get('id'))})")
+    return "\n".join(lines)
+
+
+def _truncate(text: str, max_chars: int) -> str:
+    text = text.strip()
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return text[: max_chars].rstrip() + "…"
+
+
 def _format_projects_for_prompt(projects: list[dict[str, Any]]) -> str:
     if not projects:
         return "No related projects found."
@@ -188,6 +236,9 @@ def _format_projects_for_prompt(projects: list[dict[str, Any]]) -> str:
         description = _safe_str(project.get("Descriptions")).strip() or _safe_str(
             project.get("Details")
         ).strip()
+        # Descriptions can be very long (whole project write-ups) — cap each so the
+        # prompt stays within a small context window.
+        description = _truncate(description, settings.prompt_max_project_chars)
         description_line = f"\n  Description: {description}" if description else ""
         lines.append(f"{index}. {name}{description_line}")
 
@@ -360,7 +411,12 @@ def generate_nodes_from_related_projects(
         )
     )
 
-    formatted_taxonomy = _format_taxonomy(taxonomy_nodes)
+    # Focused, complete view (root + aspects + focus options) — bounded and
+    # well-formed so the model follows the structure; safety-capped just in case.
+    formatted_taxonomy = _truncate(
+        _format_taxonomy_focused(taxonomy_nodes, focus_node_id),
+        settings.prompt_max_taxonomy_chars,
+    )
     related_projects_section = _format_projects_for_prompt(resolved_projects)
 
     user_prompt = (
@@ -381,18 +437,21 @@ def generate_nodes_from_related_projects(
             base_url=base_url,
         )
 
+        # The parent is always the focus node we asked about — a local model's
+        # echoed parent_id is unreliable and a mismatch makes the frontend drop
+        # every generated node ("no matching parent"). Force the known parent.
         options = {opt.id: opt.topic for opt in parsed.options}
         node_array = [
             {
                 "node_id": opt.id,
                 "topic": opt.topic,
-                "parent_node": parsed.parent_id,
+                "parent_node": focus_node_id,
             }
             for opt in parsed.options
         ]
 
         return {
-            "parent_id": parsed.parent_id,
+            "parent_id": focus_node_id,
             "options": options,
             "nodes": node_array,
             "related_projects": resolved_projects,

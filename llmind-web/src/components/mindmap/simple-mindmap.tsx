@@ -6,14 +6,18 @@ import MindElixir, {
   type NodeObj,
 } from 'mind-elixir';
 import 'mind-elixir/style.css';
-import { useEffect, useMemo, useRef } from 'react';
+import { Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MindmapNode, MindmapSelection } from '../../features/mindmap/types';
+import { nodeColor, nodeTextColor } from '../../lib/node-colors';
 
 interface SimpleMindMapProps {
   nodes: ReadonlyArray<MindmapNode>;
   activeTopic: string;
   onSelect: (selection: MindmapSelection) => void;
   onDataChange?: (nodes: ReadonlyArray<MindmapNode>) => void;
+  /** Id of the node currently having children generated — shows a spinner on it. */
+  generatingNodeId?: string | null;
 }
 
 interface MindElixirModel {
@@ -28,18 +32,25 @@ function convertNode(
   node: MindmapNode,
   parentLineage: string[],
   lineageById: Record<string, string[]>,
-  topicToId: Record<string, string>
+  topicToId: Record<string, string>,
+  depth: number,
+  branchIndex: number
 ): object {
   const lineage = [...parentLineage, node.topic];
   lineageById[node.id] = lineage;
   if (!topicToId[node.topic]) topicToId[node.topic] = node.id;
 
-  const children = (node.children ?? []).map((child) =>
-    convertNode(child, lineage, lineageById, topicToId)
+  const children = (node.children ?? []).map((child, i) =>
+    // Top-level children define the branch index; descendants inherit it —
+    // mirrors the design space so the same node is the same color in both.
+    convertNode(child, lineage, lineageById, topicToId, depth + 1, depth === 0 ? i : branchIndex)
   );
-  return children.length
-    ? { id: node.id, topic: node.topic, children }
-    : { id: node.id, topic: node.topic };
+  const style = {
+    background: nodeColor(branchIndex, depth),
+    color: nodeTextColor(branchIndex, depth),
+  };
+  const base = { id: node.id, topic: node.topic, style };
+  return children.length ? { ...base, children } : base;
 }
 
 function buildModel(nodes: ReadonlyArray<MindmapNode>): MindElixirModel {
@@ -53,14 +64,14 @@ function buildModel(nodes: ReadonlyArray<MindmapNode>): MindElixirModel {
   }
 
   if (nodes.length === 1) {
-    const nodeData = convertNode(nodes[0]!, [], lineageById, topicToId) as MindElixirData['nodeData'];
+    const nodeData = convertNode(nodes[0]!, [], lineageById, topicToId, 0, -1) as MindElixirData['nodeData'];
     return { data: { nodeData }, lineageById, topicToId };
   }
 
-  // Multiple root nodes — wrap in synthetic root
+  // Multiple root nodes — wrap in synthetic root; each top-level node is a branch.
   lineageById[SYNTHETIC_ROOT_ID] = ['Mind Map'];
   topicToId['Mind Map'] = SYNTHETIC_ROOT_ID;
-  const children = nodes.map((n) => convertNode(n, ['Mind Map'], lineageById, topicToId));
+  const children = nodes.map((n, i) => convertNode(n, ['Mind Map'], lineageById, topicToId, 1, i));
   const nodeData = { id: SYNTHETIC_ROOT_ID, topic: 'Mind Map', children } as MindElixirData['nodeData'];
   return { data: { nodeData }, lineageById, topicToId };
 }
@@ -87,7 +98,13 @@ function buildLineageFromParent(node: NodeObj): string[] {
     : [node.topic];
 }
 
-export function SimpleMindMap({ nodes, activeTopic, onSelect, onDataChange }: SimpleMindMapProps) {
+export function SimpleMindMap({
+  nodes,
+  activeTopic,
+  onSelect,
+  onDataChange,
+  generatingNodeId = null,
+}: SimpleMindMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mindRef = useRef<MindElixirInstance | null>(null);
   const onSelectRef = useRef(onSelect);
@@ -96,6 +113,7 @@ export function SimpleMindMap({ nodes, activeTopic, onSelect, onDataChange }: Si
   const skipRefreshRef = useRef(false);
   const model = useMemo(() => buildModel(nodes), [nodes]);
   const modelRef = useRef(model);
+  const [genPos, setGenPos] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
   useEffect(() => { onDataChangeRef.current = onDataChange; }, [onDataChange]);
@@ -179,13 +197,53 @@ export function SimpleMindMap({ nodes, activeTopic, onSelect, onDataChange }: Si
     }
   }, [activeTopic, model.topicToId]);
 
+  // Position a generation spinner over the node having children generated.
+  // Placement is scheduled (not synchronous) so it doesn't setState within the
+  // effect body, and re-runs once in case the node is still settling.
+  useEffect(() => {
+    const place = () => {
+      const mind = mindRef.current;
+      if (!generatingNodeId || !mind) {
+        setGenPos(null);
+        return;
+      }
+      try {
+        const el = mind.findEle(generatingNodeId);
+        if (el) {
+          const r = el.getBoundingClientRect();
+          setGenPos({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+        } else {
+          setGenPos(null);
+        }
+      } catch {
+        setGenPos(null);
+      }
+    };
+    const t1 = window.setTimeout(place, 0);
+    const t2 = window.setTimeout(place, 250);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [generatingNodeId, model.topicToId]);
+
   return (
-    <div className="flex min-h-[520px] flex-col overflow-hidden rounded-xl border bg-card">
+    <div className="flex h-full min-h-[520px] flex-col overflow-hidden bg-background">
       <div
         ref={containerRef}
-        className="flex-1 bg-background"
+        className="min-h-0 flex-1 bg-background"
         aria-label="Mind map visualization"
       />
+      {genPos && (
+        <div
+          className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-1/2"
+          style={{ left: genPos.x, top: genPos.y }}
+        >
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-background/80 shadow-lg ring-2 ring-sky-400/60 backdrop-blur">
+            <Loader2 className="h-5 w-5 animate-spin text-sky-500" />
+          </span>
+        </div>
+      )}
     </div>
   );
 }

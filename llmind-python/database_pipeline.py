@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import typer
 
+from config import settings
 from utils.iter import chunked
 from utils.json import save_json
 from utils.modes import BackendMode, ContentMode
@@ -53,6 +54,7 @@ from pipeline.ml import (
     select_farthest,
     umap_reduce,
 )
+from pipeline import projection as proj
 from pipeline.viz import plot_clusters
 from utils.supabase import (
     fetch_embeddings,
@@ -389,6 +391,95 @@ def farthest(
     selected_ids = [ids[i] for i in indices]
     save_json(output, selected_ids)
     typer.echo(f"Selected {len(selected_ids)} ids -> {output}")
+
+
+@app.command("project")
+def project(
+    source: str = typer.Option(
+        "local", "--source", "-s",
+        help="Embedding source for the reference corpus: 'local' (npz index) or 'supabase'.",
+    ),
+    content_mode: ContentMode = typer.Option(
+        ContentMode.details, "--content-mode", "-c",
+        help="Supabase embedding table (source=supabase only).",
+    ),
+    embed_mode: BackendMode = typer.Option(
+        BackendMode.vllm, "--embed-mode", "-m",
+        help="Supabase embedding column (source=supabase only).",
+    ),
+    index_path: Path = typer.Option(
+        None, "--index", help="Local index .npz (source=local). Defaults to settings.local_index_path.",
+    ),
+    dims: int = typer.Option(2, "--dims", min=2, max=3, help="Projection dimensions (2 or 3)."),
+    resolution: int = typer.Option(proj.DEFAULT_RESOLUTION, "--resolution", "-r", min=4, help="Lattice resolution (R×R)."),
+    neighbors: int = typer.Option(proj.DEFAULT_NEIGHBORS, "--neighbors", help="UMAP n_neighbors."),
+    min_dist: float = typer.Option(proj.DEFAULT_MIN_DIST, "--min-dist", help="UMAP min_dist."),
+    pre_pca: int = typer.Option(proj.DEFAULT_PRE_PCA, "--pre-pca", help="Pre-PCA dims before UMAP (0 to disable)."),
+    clusters: int = typer.Option(8, "--clusters", help="KMeans clusters for background colouring."),
+    random_state: int = typer.Option(proj.DEFAULT_RANDOM_STATE, "--seed", help="Random seed."),
+) -> None:
+    """Fit the frozen design-space projection on the corpus and write background surface.
+
+    Writes ``data/projection/model.joblib`` (for transforming new taxonomy nodes at
+    runtime) and ``data/projection/surface.json`` (the precomputed corpus background
+    served to the frontend). Fitting needs no LLM/embedding server — only the
+    pre-computed corpus vectors.
+    """
+    # ── Load reference corpus embeddings ──────────────────────────────────────
+    names: Dict[str, str] = {}
+    if source == "local":
+        resolved = index_path or settings.local_index_path
+        if not resolved.exists():
+            typer.secho(f"Local index not found at {resolved}. Build it with build_local_index.py.", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+        data = np.load(resolved, allow_pickle=True)
+        ids = [str(i) for i in data["ids"].tolist()]
+        embs = data["vectors"]
+        meta_path = Path(f"{resolved}.meta.json")
+        if meta_path.exists():
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            names = {str(k): (v.get("Name") or "") for k, v in meta.items()}
+    elif source == "supabase":
+        emb_table = EMB_TABLE_MAP[content_mode]
+        typer.secho(f"Fetching embeddings from '{emb_table}' ({EMB_COLUMN_MAP[embed_mode]})...", fg=typer.colors.BLUE)
+        ids, _metas, emb_list = fetch_embeddings(emb_table, embed_mode=embed_mode)
+        embs = np.array(emb_list, dtype=float)
+    else:
+        typer.secho("--source must be 'local' or 'supabase'.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    X = np.asarray(embs, dtype=float)
+    if X.shape[0] == 0:
+        typer.secho("No embeddings found to fit the projection.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    typer.secho(f"Fitting {dims}D projection on {X.shape[0]} corpus points ({X.shape[1]}d)...", fg=typer.colors.BLUE)
+
+    # ── Fit + transform reference set through the frozen model ────────────────
+    model = proj.fit_projection(
+        X,
+        dims=dims,
+        n_neighbors=neighbors,
+        min_dist=min_dist,
+        pre_pca=(pre_pca if pre_pca > 0 else None),
+        random_state=random_state,
+    )
+    coords = model.transform(X)
+    labels = kmeans_cluster(coords, max(1, min(clusters, X.shape[0])))
+
+    surface = proj.build_surface_payload(
+        ids=ids, coords=coords, dims=dims, resolution=resolution,
+        clusters=labels, model_meta={**model.meta, "source": source},
+    )
+    for point in surface["points"]:
+        if point["id"] in names:
+            point["name"] = names[point["id"]]
+
+    projection_dir = settings.projection_dir
+    model_path = proj.save_model(model, projection_dir)
+    surface_path = projection_dir / proj.SURFACE_FILENAME
+    save_json(surface_path, surface)
+    typer.secho(f"Saved projection model -> {model_path}", fg=typer.colors.GREEN)
+    typer.secho(f"Saved background surface ({len(surface['points'])} points) -> {surface_path}", fg=typer.colors.GREEN)
 
 
 if __name__ == "__main__":

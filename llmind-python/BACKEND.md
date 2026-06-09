@@ -79,13 +79,13 @@ curl -s -X POST http://localhost:8000/api/related-projects/search \
 ---
 
 ### `POST /api/related-projects/generate-nodes`
-Generate child nodes for a selected mindmap node using an LLM.
+Generate child nodes for a selected mindmap node using an LLM. **Async** (see below).
 
 **Request** — full schema in `backend/related_projects/router.py:GenerateNodesRequest`
 
 Key fields: `taxonomy_nodes`, `focus_node`, `lineage`, `should_query_supabase`, `related_projects`, `mode`, `reasoning_effort`.
 
-**Response** `200`
+**Response** `202` — `{ "job_id": "...", "status": "pending" }`. Poll `GET /api/jobs/{job_id}`; the job `result` is:
 ```json
 {
   "parent_id": "string",
@@ -105,11 +105,40 @@ curl -s -X POST http://localhost:8000/api/related-projects/generate-nodes \
 
 ---
 
+### Projection (design space)
+
+Frozen 2D projection of the project corpus for the design-space visualization. Fit
+once with the CLI (`uv run python database_pipeline.py project`), then served/queried
+at runtime. See [`../DESIGN-SPACE-VIZ.md`](../DESIGN-SPACE-VIZ.md).
+
+| Endpoint | Purpose | Needs embed/LLM server |
+|---|---|---|
+| `GET /api/projection/surface` | Precomputed corpus background: grid spec, points, density | No |
+| `POST /api/projection/locate` | Embed taxonomy-node text → coords in the frozen space (`{items:[{node_id,text}]}`) | Yes (embed) |
+| `POST /api/projection/generate-at` | **Async.** Spatial-neighbour RAG: clicked `(x,y)` → new child nodes of a focus node, with coords | Yes (embed + LLM) |
+
+`surface`/`locate` return `502` with `ServiceError` detail on failure. Artifacts live in
+`data/projection/` (`model.joblib`, `surface.json`); path is `settings.projection_dir`.
+
+### Async generation (jobs)
+
+`generate-at` and `generate-nodes` are long (local LLM ~50-80s). They return
+`202 {job_id}` immediately and run on a background thread pool (`backend/jobs.py`);
+poll `GET /api/jobs/{job_id}` → `{status: pending|done|error, result, detail}`. This
+keeps every HTTP request short (the Next.js dev proxy can't deliver long responses)
+and lets the UI show a spinner on the target dot/node. Jobs are in-memory and
+process-local (single-process server only), pruned after 30 min.
+
+---
+
 ## Architecture
 
 | Layer | Location | Responsibility |
 |---|---|---|
-| Entry point | `backend/main.py` | Mounts both routers |
+| Entry point | `backend/main.py` | Mounts routers; CORS (browser calls backend directly) |
+| Router/Service — projection | `backend/projection/{router,service}.py` | Surface, node location, generate-at (spatial RAG) |
+| Projection core | `pipeline/projection.py` | Frozen PCA→UMAP reducer, persistence, grid, density, nearest |
+| Async jobs | `backend/jobs.py` + `backend/jobs_router.py` | Background thread pool + `GET /api/jobs/{id}` polling for long generation |
 | Config | `config.py` | Single `Settings` instance via pydantic-settings |
 | Router — taxonomy | `backend/taxonomy/router.py` | Request validation; catches `TaxonomyServiceError` → 502 |
 | Service — taxonomy | `backend/taxonomy/service.py` | Path resolution, calls `generate_taxonomy` |

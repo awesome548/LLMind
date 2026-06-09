@@ -104,6 +104,16 @@ export const useMindmapStore = create<MindmapStoreState>()(
       }),
       {
         name: 'mindmap-store',
+        // Bump when the persisted shape or the default schema changes. v1 drops
+        // any pre-v1 state, which could contain a stale placeholder `taxonomy`
+        // that pins the mind map to an old/minimal schema and suppresses the
+        // generate-taxonomy prompt (because the dialog only auto-opens when
+        // `taxonomy` is null).
+        version: 1,
+        migrate: (persisted, version) =>
+          version < 1
+            ? createInitialState()
+            : (persisted as ReturnType<typeof createInitialState>),
         partialize: (state) => ({
           contextText: state.contextText,
           contextDescription: state.contextDescription,

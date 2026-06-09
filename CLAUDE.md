@@ -45,14 +45,18 @@ bun dev                                    # → http://localhost:3000
 
 ---
 
-## API Proxy
+## API connection (direct, not proxied)
 
-All `/api/*` requests from the frontend are proxied to the backend via `next.config.ts`:
-```
-/api/related-projects/*  →  $BACKEND_URL/api/related-projects/*
-/api/taxonomy/*          →  $BACKEND_URL/api/taxonomy/*
-```
-`BACKEND_URL` defaults to `http://0.0.0.0:8000`. Override with `BACKEND_URL` env var.
+The frontend calls the backend **directly**, not through the Next.js rewrite proxy.
+`src/lib/api-client.ts` sets `baseURL = NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'`,
+and the backend enables CORS (`backend/main.py`).
+
+**Why:** the Next.js dev `rewrites()` proxy does not deliver responses for
+long-running upstream requests (local LLM generation can take 50s+) — the backend
+returns 200 but the browser never receives it, leaving the UI stuck. A direct
+connection handles long requests reliably. The `next.config.ts` rewrite remains as
+a fallback (used only if `NEXT_PUBLIC_API_BASE_URL` is set to an empty string).
+`BACKEND_URL` still controls the (now-fallback) proxy target.
 
 ---
 

@@ -1,6 +1,5 @@
 import { useMutation } from '@tanstack/react-query';
-import { isAxiosError } from 'axios';
-import api from '@/src/lib/api-client';
+import { runJob } from '@/src/lib/run-job';
 import type {
   GenerateNodesRequestSchema,
   GenerateNodesResponseSchema,
@@ -66,33 +65,12 @@ export function generatedNodesToMindmapNodes(
 
 // ── API call ─────────────────────────────────────────────────────────────────
 
-const generateNodes = async (
+const generateNodes = (
   request: GenerateNodesRequestSchema
-): Promise<GenerateNodesResponseSchema> => {
-  try {
-    const { data } = await api.post<GenerateNodesResponseSchema>(
-      '/api/related-projects/generate-nodes',
-      request
-    );
-    return data;
-  } catch (error) {
-    if (isAxiosError(error)) {
-      const status = error.response?.status;
-      const detail =
-        typeof error.response?.data === 'string'
-          ? error.response.data
-          : error.response?.data && typeof error.response.data === 'object' && 'detail' in error.response.data
-            ? String(error.response.data.detail)
-            : null;
-
-      const statusLabel = status ? `HTTP ${status}` : 'Network error';
-      const reason = detail ?? error.message;
-      throw new Error(`Failed to generate nodes (${statusLabel}): ${reason}`);
-    }
-
-    throw new Error('Failed to generate nodes.', { cause: error });
-  }
-};
+): Promise<GenerateNodesResponseSchema> =>
+  // Long generation runs as a backend job; poll to completion (short requests,
+  // no dropped long-held connection).
+  runJob<GenerateNodesResponseSchema>('/api/related-projects/generate-nodes', request);
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 

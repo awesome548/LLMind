@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     supabase_match_count: int = 5
     supabase_similarity_threshold: float = 0.0
 
+    # ── Prompt budget (bound node-generation prompts to fit small contexts) ────
+    # Each node-generation call is stateless (a fresh system+user message, no
+    # accumulation across calls). The taxonomy is serialized as a small FOCUSED
+    # view (root + aspects + the focus aspect's options), so it stays bounded as
+    # the tree grows. Per-project descriptions are the main variable cost — cap
+    # them; lower for very small contexts. prompt_max_taxonomy_chars is a final
+    # safety cap on the focused view.
+    prompt_max_project_chars: int = 400   # per related-project description
+    prompt_max_taxonomy_chars: int = 1800  # safety cap on the focused taxonomy
+
     # ── vLLM (local embeddings) ───────────────────────────────────────────────
     vllm_base_url: str = "http://100.73.44.12:8001/v1"
     vllm_model: str = "qwen"
@@ -51,6 +61,12 @@ class Settings(BaseSettings):
     # (built by build_local_index.py, searched with the local embedding model).
     vector_store: str = "supabase"
     local_index_path: Path = Path("data") / "local_index.npz"
+
+    # ── Design-space projection ───────────────────────────────────────────────
+    # Frozen reducer + background surface for the design-space visualisation.
+    # Anchored to ``data/`` (like local_index_path) rather than data_dir so it
+    # sits next to the index it is fit from and is independent of DATA_DIR.
+    projection_dir: Path = Path("data") / "projection"
 
     # ── Scraper ───────────────────────────────────────────────────────────────
     base_url: str = "https://awards.mediaarchitecture.org"

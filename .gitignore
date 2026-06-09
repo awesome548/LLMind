@@ -64,3 +64,9 @@ chroma_db/
 results/
 MISC_project_files/
 archive/
+
+# Editor/agent tooling config
+.claude/
+
+# Generated design-space projection (rebuild with: database_pipeline.py project)
+llmind-python/data/projection/

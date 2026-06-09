@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, status
 from pydantic import BaseModel, Field
 
+from backend import jobs
 from backend.related_projects.service import (
-    ServiceError,
     search_related_projects as search_related_projects_service,
     generate_nodes_from_related_projects,
 )
@@ -100,46 +100,29 @@ def search_related_projects(payload: FetchRelatedProjectsRequest) -> FetchRelate
     return FetchRelatedProjectsResponse(projects=validated_projects)
 
 
-@router.post(
-    "/generate-nodes",
-    response_model=GenerateNodesResponse,
-    status_code=status.HTTP_200_OK,
-)
-def generate_nodes(payload: GenerateNodesRequest) -> GenerateNodesResponse:
-    try:
-        generated = generate_nodes_from_related_projects(
-            focus_node_id=payload.focus_node.id,
-            focus_node_topic=payload.focus_node.topic,
-            taxonomy_nodes=[node.model_dump() for node in payload.taxonomy_nodes],
-            lineage=payload.lineage,
-            description=payload.description,
-            should_query_supabase=payload.should_query_supabase,
-            related_projects=(
-                [project.model_dump() for project in payload.related_projects]
-                if payload.related_projects is not None
-                else None
-            ),
-            model=payload.model,
-            mode=payload.mode,
-            base_url=payload.base_url,
-            reasoning_effort=payload.reasoning_effort,
-        )
+@router.post("/generate-nodes", status_code=status.HTTP_202_ACCEPTED)
+def generate_nodes(payload: GenerateNodesRequest) -> dict:
+    """Start node generation; returns a ``job_id`` to poll at ``GET /api/jobs/{id}``.
 
-        generated_nodes = [
-            GeneratedNode.model_validate(node) for node in generated["nodes"]
-        ]
-        resolved_projects = [
-            RelatedProject.model_validate(project)
-            for project in generated["related_projects"]
-        ]
-        return GenerateNodesResponse(
-            parent_id=generated["parent_id"],
-            options=generated["options"],
-            nodes=generated_nodes,
-            related_projects=resolved_projects,
-        )
-    except ServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
+    Generation is long (local LLM), so it runs as a background job rather than
+    blocking the request. The job result matches ``GenerateNodesResponse``.
+    """
+    job_id = jobs.submit(
+        generate_nodes_from_related_projects,
+        focus_node_id=payload.focus_node.id,
+        focus_node_topic=payload.focus_node.topic,
+        taxonomy_nodes=[node.model_dump() for node in payload.taxonomy_nodes],
+        lineage=payload.lineage,
+        description=payload.description,
+        should_query_supabase=payload.should_query_supabase,
+        related_projects=(
+            [project.model_dump() for project in payload.related_projects]
+            if payload.related_projects is not None
+            else None
+        ),
+        model=payload.model,
+        mode=payload.mode,
+        base_url=payload.base_url,
+        reasoning_effort=payload.reasoning_effort,
+    )
+    return {"job_id": job_id, "status": "pending"}

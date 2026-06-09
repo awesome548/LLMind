@@ -28,7 +28,10 @@ Next.js 16 frontend. React 19, Bun, TanStack Query, Zustand.
 | Components | `src/components/mindmap/` | `SimpleMindMap` (mind-elixir wrapper), `SimpleProjectPanel` |
 | Dialog | `src/features/mindmap/components/generate-taxonomy-dialog.tsx` | Taxonomy generation form (project overview, reasoning, mode) |
 | Data | `src/features/mindmap/data/schema-mindmap-data.ts` | Static initial taxonomy + `taxonomyToMindmapNodes()` converter |
-| Page | `src/app/mindmap/page.tsx` | Main orchestrator — wires store, hooks, components |
+| Page | `src/app/mindmap/page.tsx` | Main orchestrator — wires store, hooks, components; Mind Map ⇄ Design Space toggle |
+| Design space — surface | `src/components/design-space/design-space-surface.tsx` | SVG lattice: heat-shaded corpus background, branch-colored node dots, empty-cell generation |
+| Design space — hooks | `src/features/design-space/hooks/` | `use-surface-query`, `use-locate-nodes`, `use-generate-at-mutation` |
+| Design space — types | `src/features/design-space/types.ts` | Hand-written `/api/projection/*` types (fold into `openapi.ts` on regen) |
 
 ---
 
@@ -46,6 +49,13 @@ Next.js 16 frontend. React 19, Bun, TanStack Query, Zustand.
 3. Submit → `useGenerateTaxonomyMutation` → `POST /api/taxonomy/generate`
 4. `onSuccess` → `useMindmapStore.setTaxonomy(result)`
 5. `page.tsx` `useEffect` on `taxonomy` → `taxonomyToMindmapNodes(taxonomy)` → replaces `nodes` state and resets selection to root
+
+### Design Space ⇄ Mind Map (two views, one selection)
+1. Top-center toggle switches `view` between `'map'` and `'space'` — both read the same `nodes` + `selection`.
+2. `useSurfaceQuery` loads the corpus background once (`GET /api/projection/surface`).
+3. On `nodes` change, missing nodes are embedded + placed via `POST /api/projection/locate` (best-effort; failures leave the background intact). Each node is attempted once per session.
+4. Clicking an **empty** lattice cell → `useGenerateAtMutation` (`POST /api/projection/generate-at`) → new children inserted into the tree (shared `insertChildrenAtNode`) with coords merged from the response — appears in both views.
+5. Clicking a **node** dot updates `selection` (same handler as the mind map), so toggling back preserves the active node. See [`../DESIGN-SPACE-VIZ.md`](../DESIGN-SPACE-VIZ.md) and [`../DESIGN-SPACE-TESTING.md`](../DESIGN-SPACE-TESTING.md).
 
 ### Placeholder filter
 The backend returns `{ Name: "Relevant projects will appear here" }` when Supabase has no matches. The page filters this out before passing `relatedProjects` to the generate-nodes call.
