@@ -391,6 +391,15 @@ export function DesignSpaceSurface({
             const fy = snapY(trail.from.y);
             return (
               <g pointerEvents="none">
+                {/* Range glow at the clicked/discovered cell — the trace origin. */}
+                <defs>
+                  <radialGradient id="ds-discovery-glow">
+                    <stop offset="0%" stopColor={DISCOVERED_COLOR} stopOpacity={0.4} />
+                    <stop offset="45%" stopColor={DISCOVERED_COLOR} stopOpacity={0.16} />
+                    <stop offset="100%" stopColor={DISCOVERED_COLOR} stopOpacity={0} />
+                  </radialGradient>
+                </defs>
+                <circle cx={fx} cy={fy} r={cell * 5} fill="url(#ds-discovery-glow)" />
                 {trail.to.map((pt, i) => {
                   const tx = snapX(pt.x);
                   const ty = snapY(pt.y);

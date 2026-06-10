@@ -318,9 +318,10 @@ export default function MindmapPage() {
       const resolution = surface.grid.resolution;
       setPendingCell([Math.floor(x * resolution), Math.floor(y * resolution)]);
       setGenerateError(null);
-      // Reflect the target aspect in the selection so its region highlights and
-      // its related projects load.
-      setSelection({ topic: focusTopic, lineage: [...focusLineage] });
+      // NOTE: we deliberately do NOT move the selection to the focus aspect here.
+      // The aspect's dot sits at its own embedding position — often far from both
+      // the click and the generated children — so highlighting it looked like a
+      // random, unconnected glow. The clicked cell glows instead (via the trail).
 
       try {
         const response = await generateAt({
