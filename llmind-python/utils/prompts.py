@@ -80,13 +80,65 @@ In <JSON> provide ID of the node that you explored and create new Node ids accor
 Suppose explored node is "Aspect", each of new Nodes is "Option":
 - Aspect: a key dimension or parameter of the design space (e.g., display technology, location, type of interaction).
 - Option: possible alternatives for an aspect (e.g., for the aspect "Display," options might include LED panels or projection).
-the options should be concise and simple.
+the options should be concise and simple; each "desc" is ONE dense, specific sentence describing the option (it is embedded for retrieval — be concrete, not generic).
 
 Use the following JSON structure exactly:
 {
   "parent_id": "<SELECTED_NODE_ID>",
   "options": [
-    { "id": "<new_node_id>", "topic": "<option label>" },
-    { "id": "<new_node_id>", "topic": "<option label>" }
+    { "id": "<new_node_id>", "topic": "<option label>", "desc": "<one-sentence description>" },
+    { "id": "<new_node_id>", "topic": "<option label>", "desc": "<one-sentence description>" }
+  ]
+}"""
+
+
+# Version tag logged with every generate-at call so prompt/seeding variants can
+# be compared in data/projection/generate_log.jsonl. Bump when the prompt or
+# the seeding strategy changes behaviour.
+GENERATE_AT_PROMPT_VERSION = 2
+
+GENERATE_AT_PROMPT = """TASK:
+The designer clicked an UNOCCUPIED location on a 2D map of the design space — a
+gap where no real project and no existing idea sits. Propose new design Options
+that conceptually belong AT that location.
+
+SURROUNDING REAL PROJECTS (the gap's neighbourhood — these bracket the clicked
+location from different sides):
+{{RELATED_PROJECTS}}
+
+NEARBY EXISTING IDEAS (already on the map near the click — do NOT duplicate or
+trivially rephrase any of these):
+{{NEARBY_OPTIONS}}
+
+PARENT ASPECT (the new Options will be filed under this dimension):
+ID: {{SELECTED_NODE_ID}}
+Topic: {{SELECTED_NODE_TOPIC}}
+
+TAXONOMY (context only):
+{{TAXONOMY}}
+
+INSTRUCTIONS:
+- Propose Options that sit conceptually BETWEEN the surrounding projects yet are
+  distinct from every one of them: fill the gap, do not imitate the nearest
+  project and do not average them into something generic.
+- Each Option must be a plausible alternative within the parent Aspect.
+- Each "desc" is ONE dense, specific sentence describing the option. It is
+  embedded to position the idea on the map, so make it concrete: name the
+  mechanism, material, interaction, or context that makes this option itself.
+- 2 to 4 Options; concise topics (2-5 words).
+
+Respond in the following format
+THOUGHT:
+<Why these options fill the gap between the surrounding projects.>
+
+NEW IDEA JSON:
+```json
+<JSON>
+```
+Use the following JSON structure exactly:
+{
+  "parent_id": "<SELECTED_NODE_ID>",
+  "options": [
+    { "id": "<new_node_id>", "topic": "<option label>", "desc": "<one-sentence description>" }
   ]
 }"""

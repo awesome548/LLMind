@@ -480,6 +480,94 @@ def project(
     save_json(surface_path, surface)
     typer.secho(f"Saved projection model -> {model_path}", fg=typer.colors.GREEN)
     typer.secho(f"Saved background surface ({len(surface['points'])} points) -> {surface_path}", fg=typer.colors.GREEN)
+    trust = model.meta.get("trustworthiness")
+    if trust is not None:
+        typer.secho(
+            f"Layout trustworthiness: {trust:.3f} (k={model.meta.get('trust_neighbors')})",
+            fg=typer.colors.BLUE,
+        )
+
+
+@app.command("project-calibrate")
+def project_calibrate(
+    field: str = typer.Option(
+        "Name", "--field",
+        help="Metadata field used as the SHORT locate text (e.g. Name).",
+    ),
+    limit: int = typer.Option(0, "--limit", help="Calibrate on at most N projects (0 = all)."),
+    batch_size: int = typer.Option(64, "--batch-size", help="Embedding batch size."),
+) -> None:
+    """Measure how trustworthy SHORT-text placement is in the frozen space.
+
+    Taxonomy nodes are located from short texts (a topic, maybe one line of
+    description), but the projection was fit on full project descriptions. This
+    command quantifies that register mismatch: it re-locates every corpus project
+    by a short text (its name) and reports the displacement from the project's
+    true coordinate. Needs the local embedding server (same as /locate).
+
+    Interpretation: median displacement is in the [0,1]² surface space — compare
+    it to the lattice cell size (1/resolution ≈ 0.021 at R=48). A median several
+    cells wide means node dots should be read as "neighbourhood", not "position".
+    """
+    surface_path = settings.projection_dir / proj.SURFACE_FILENAME
+    if not surface_path.exists():
+        typer.secho("Surface not found — run `database_pipeline.py project` first.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    surface = json.loads(surface_path.read_text(encoding="utf-8"))
+    model = proj.load_model(settings.projection_dir)
+
+    meta_path = Path(f"{settings.local_index_path}.meta.json")
+    if not meta_path.exists():
+        typer.secho(f"Corpus metadata sidecar not found at {meta_path}.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+    true_by_id = {str(p["id"]): (float(p["x"]), float(p["y"])) for p in surface["points"]}
+    items = [
+        (pid, str(record.get(field) or "").strip())
+        for pid, record in meta.items()
+        if pid in true_by_id and str(record.get(field) or "").strip()
+    ]
+    if limit > 0:
+        items = items[:limit]
+    if not items:
+        typer.secho(f"No projects with a non-empty '{field}' field to calibrate on.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    typer.secho(
+        f"Embedding {len(items)} short texts ('{field}') with {VLLM_EMBED_MODEL}...",
+        fg=typer.colors.BLUE,
+    )
+    client = build_vllm_client(VLLM_BASE_URL)
+    vectors: List[List[float]] = []
+    for batch in chunked(items, batch_size):
+        response = client.embeddings.create(
+            model=VLLM_EMBED_MODEL, input=[text for _, text in batch]
+        )
+        vectors.extend(d.embedding for d in response.data)
+
+    coords = model.transform(np.asarray(vectors, dtype=float))
+    displacements = np.array(
+        [
+            float(np.hypot(coords[i][0] - true_by_id[pid][0], coords[i][1] - true_by_id[pid][1]))
+            for i, (pid, _) in enumerate(items)
+        ]
+    )
+
+    resolution = int(surface.get("grid", {}).get("resolution", proj.DEFAULT_RESOLUTION))
+    cell = 1.0 / resolution
+    median = float(np.median(displacements))
+    typer.secho(f"Short-text placement displacement over {len(items)} projects:", fg=typer.colors.BLUE)
+    typer.echo(f"  mean   {displacements.mean():.4f}  ({displacements.mean() / cell:.1f} cells)")
+    typer.echo(f"  median {median:.4f}  ({median / cell:.1f} cells)")
+    typer.echo(f"  p90    {np.percentile(displacements, 90):.4f}  ({np.percentile(displacements, 90) / cell:.1f} cells)")
+    typer.echo(f"  max    {displacements.max():.4f}  ({displacements.max() / cell:.1f} cells)")
+    verdict = (
+        "tight — short-text placement is roughly cell-accurate"
+        if median <= 2 * cell
+        else "loose — read node dots as a neighbourhood, not an exact position"
+    )
+    typer.secho(f"  verdict: {verdict}", fg=typer.colors.GREEN if median <= 2 * cell else typer.colors.YELLOW)
 
 
 if __name__ == "__main__":

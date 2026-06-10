@@ -68,6 +68,7 @@ class GenerateNodesRequest(BaseModel):
 class GeneratedNode(BaseModel):
     node_id: str
     topic: str
+    desc: str = ""
     parent_node: str
 
 

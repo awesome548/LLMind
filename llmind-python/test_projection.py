@@ -155,6 +155,104 @@ def test_service_offline() -> None:
           nb[0]["id"] == str(pts[0]["id"]))
 
 
+def test_corpus_service() -> None:
+    from backend.corpus import service as corpus
+
+    meta = corpus.load_index_meta()
+    if not meta:
+        check("corpus: metadata sidecar present", False, "run build_local_index.py first")
+        return
+    check("corpus: metadata sidecar present", True)
+
+    pid = next(iter(meta))
+    record = corpus.get_project(pid)
+    check("corpus: get_project returns normalised record",
+          record["id"] == pid and "Name" in record and "Descriptions" in record)
+    try:
+        corpus.get_project("__not_a_project__")
+        check("corpus: unknown id raises KeyError", False)
+    except KeyError:
+        check("corpus: unknown id raises KeyError", True)
+
+
+def test_generate_at_helpers() -> None:
+    from backend.projection import service
+
+    taxonomy = [
+        {"id": "root", "topic": "Design Aspects", "isroot": True},
+        {"id": "a1", "topic": "Display", "parentid": "root"},
+        {"id": "a2", "topic": "Interaction", "parentid": "root"},
+        {"id": "o1", "topic": "LED", "parentid": "a1"},
+        {"id": "o2", "topic": "Projection", "parentid": "a1"},
+        {"id": "o3", "topic": "Gesture", "parentid": "a2"},
+    ]
+    coords = [
+        {"node_id": "o1", "x": 0.1, "y": 0.1},
+        {"node_id": "o2", "x": 0.2, "y": 0.1},
+        {"node_id": "o3", "x": 0.8, "y": 0.9},
+    ]
+    near_display = service._derive_parent_aspect(taxonomy, coords, 0.15, 0.12)
+    near_interaction = service._derive_parent_aspect(taxonomy, coords, 0.85, 0.85)
+    check("generate-at: parent aspect derived spatially (display side)",
+          near_display is not None and near_display["id"] == "a1",
+          f"got {near_display}")
+    check("generate-at: parent aspect derived spatially (interaction side)",
+          near_interaction is not None and near_interaction["id"] == "a2",
+          f"got {near_interaction}")
+    check("generate-at: no coords → no derived parent (fallback to caller focus)",
+          service._derive_parent_aspect(taxonomy, [], 0.5, 0.5) is None)
+
+    nearby = service._format_nearby_options(taxonomy, coords, 0.15, 0.12)
+    check("generate-at: nearby options include close, exclude far",
+          "LED" in nearby and "Gesture" not in nearby, nearby.replace("\n", " | "))
+    check("generate-at: empty region reads as unexplored",
+          "unexplored" in service._format_nearby_options(taxonomy, coords, 0.5, 0.6))
+
+    seeds = service.seed_corpus(0.5, 0.5, 5)
+    seed_ids = [s["id"] for s in seeds]
+    check("generate-at: bracket seeding returns k unique projects with metadata",
+          len(seeds) == 5 and len(set(seed_ids)) == 5 and all("Name" in s for s in seeds))
+    # Bracketing property: the seed set should not be a single tight cluster —
+    # at least two seeds further apart (in 2D) than each is from the click.
+    import math as _math
+    pts = [(s["x"], s["y"]) for s in seeds]
+    spread = max(
+        _math.hypot(ax - bx, ay - by) for ax, ay in pts for bx, by in pts
+    )
+    nearest = min(_math.hypot(px - 0.5, py - 0.5) for px, py in pts)
+    check("generate-at: seeds bracket the click (spread > nearest distance)",
+          spread > nearest, f"spread={spread:.3f} nearest={nearest:.3f}")
+
+
+def test_fidelity_metrics() -> None:
+    from backend.projection import service
+
+    model = proj.load_model(settings.projection_dir)
+    trust = model.meta.get("trustworthiness")
+    check("fidelity: trustworthiness in model meta and in [0,1]",
+          trust is not None and 0.0 <= trust <= 1.0, f"trust={trust}")
+
+    surface = service.load_surface()
+    check("fidelity: trustworthiness served in surface meta",
+          "trustworthiness" in surface.get("meta", {}))
+
+    # Self-consistency: scoring corpus vectors at their own true coordinates must
+    # yield non-trivial confidence (each point's 2D neighbourhood IS roughly its
+    # true neighbourhood — modulo the projection's own distortion).
+    ids, vecs = service._load_corpus_vectors()
+    if ids:
+        pts = {str(p["id"]): (p["x"], p["y"]) for p in surface["points"]}
+        sample_ids = [i for i in ids[:8] if i in pts]
+        sample_vecs = vecs[: len(sample_ids)]
+        coords = np.array([pts[i] for i in sample_ids])
+        confs = service._placement_confidence(sample_vecs, coords)
+        scored = [c for c in confs if c is not None]
+        mean_conf = sum(scored) / len(scored) if scored else 0.0
+        check("fidelity: corpus self-confidence is non-trivial",
+              len(scored) == len(confs) and mean_conf > 0.15,
+              f"mean={mean_conf:.2f}")
+
+
 # ── HTTP smoke (server running, no embedding server needed) ───────────────────
 
 
@@ -253,6 +351,9 @@ def main() -> int:
     print("\n== Offline: persisted artifacts + service ==")
     test_persisted_artifacts()
     test_service_offline()
+    test_corpus_service()
+    test_generate_at_helpers()
+    test_fidelity_metrics()
 
     if args.http or args.live:
         print("\n== HTTP smoke ==")

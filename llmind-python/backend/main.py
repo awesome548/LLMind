@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.corpus.router import router as corpus_router
 from backend.jobs_router import router as jobs_router
 from backend.projection.router import router as projection_router
 from backend.related_projects.router import router as related_projects_router
@@ -21,6 +22,7 @@ app.add_middleware(
 app.include_router(related_projects_router)
 app.include_router(taxonomy_router)
 app.include_router(projection_router)
+app.include_router(corpus_router)
 app.include_router(jobs_router)
 
 

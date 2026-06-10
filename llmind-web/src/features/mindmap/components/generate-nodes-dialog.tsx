@@ -78,8 +78,9 @@ export function GenerateNodesDialog({
             <DialogHeader>
               <DialogTitle>Generate Nodes</DialogTitle>
               <DialogDescription>
-                Expand <span className="font-medium text-foreground">"{selectedTopic}"</span> with
-                AI-generated child nodes.
+                Expand{' '}
+                <span className="font-medium text-foreground">&ldquo;{selectedTopic}&rdquo;</span>{' '}
+                with AI-generated child nodes.
               </DialogDescription>
             </DialogHeader>
 

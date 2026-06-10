@@ -32,6 +32,7 @@ DEFAULT_PRE_PCA = 64
 DEFAULT_NEIGHBORS = 15
 DEFAULT_MIN_DIST = 0.1
 DEFAULT_RANDOM_STATE = 42
+DEFAULT_TRUST_NEIGHBORS = 15
 MODEL_FILENAME = "model.joblib"
 SURFACE_FILENAME = "surface.json"
 
@@ -166,6 +167,19 @@ def fit_projection(
         )
         coords = np.asarray(reducer.fit_transform(reduced), dtype=float)
 
+    # Layout fidelity: sklearn trustworthiness of the 2D embedding w.r.t. the
+    # (unit-normalised) input space. Reported to the UI so the surface is honest
+    # about how much of the high-dim neighbourhood structure survived projection.
+    trust: Optional[float] = None
+    trust_k = min(DEFAULT_TRUST_NEIGHBORS, max(1, (n_samples - 1) // 2))
+    if n_samples > 4:
+        try:
+            from sklearn.manifold import trustworthiness as _trustworthiness
+
+            trust = float(_trustworthiness(arr, coords, n_neighbors=trust_k))
+        except Exception:  # noqa: BLE001 — fidelity score is best-effort metadata
+            trust = None
+
     bounds = [(float(coords[:, a].min()), float(coords[:, a].max())) for a in range(dims)]
     return ProjectionModel(
         reducer=reducer,
@@ -180,6 +194,8 @@ def fit_projection(
             "pre_pca": (pca.n_components_ if pca is not None else None),
             "metric": "euclidean (unit-normalized ≈ cosine)",
             "random_state": random_state,
+            "trustworthiness": trust,
+            "trust_neighbors": trust_k,
         },
         normalized=True,
     )

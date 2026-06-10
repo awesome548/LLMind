@@ -15,6 +15,14 @@ export interface SurfacePoint {
   name?: string;
 }
 
+export interface SurfaceMeta {
+  /** sklearn trustworthiness of the 2D layout w.r.t. the original embedding space. */
+  trustworthiness?: number | null;
+  trust_neighbors?: number;
+  n_reference?: number;
+  [key: string]: unknown;
+}
+
 export interface Surface {
   version: number;
   dims: number;
@@ -22,7 +30,7 @@ export interface Surface {
   bounds: { min: number; max: number };
   density: number[][]; // [row=gy][col=gx] occupancy counts
   points: SurfacePoint[];
-  meta: Record<string, unknown>;
+  meta: SurfaceMeta;
 }
 
 export interface LocatedPoint {
@@ -30,6 +38,8 @@ export interface LocatedPoint {
   x: number;
   y: number;
   z?: number;
+  /** Jaccard overlap of true vs 2D neighbourhood — how much to trust the position. */
+  confidence?: number | null;
 }
 
 export interface LocateResponse {
@@ -49,10 +59,14 @@ export interface SeedNeighbour {
 export interface GeneratedNodeWithCoord {
   node_id: string;
   topic: string;
+  /** One-sentence description — embedded for placement, shown as context. */
+  desc?: string;
   parent_node: string;
   x?: number;
   y?: number;
   z?: number;
+  /** Distance from the clicked location to where this node actually landed. */
+  drift?: number;
 }
 
 export interface GenerateAtResponse {
@@ -63,7 +77,19 @@ export interface GenerateAtResponse {
   coords: LocatedPoint[];
   seed_neighbours: SeedNeighbour[];
   target: { x: number; y: number };
+  mean_drift?: number | null;
 }
 
 /** node.id → continuous [0,1] coordinate in the frozen design space. */
-export type CoordMap = Record<string, { x: number; y: number; z?: number }>;
+export type CoordMap = Record<
+  string,
+  { x: number; y: number; z?: number; confidence?: number | null }
+>;
+
+/** A connector drawn from a generation's clicked cell to the nodes it produced. */
+export interface GenerationTrail {
+  from: { x: number; y: number };
+  to: Array<{ x: number; y: number }>;
+  /** Mean distance from the click to where the generated nodes landed. */
+  meanDrift?: number | null;
+}

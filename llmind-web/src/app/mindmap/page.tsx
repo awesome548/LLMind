@@ -15,17 +15,23 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SimpleMindMap } from '@/src/components/mindmap/simple-mindmap';
 import { SimpleProjectPanel } from '@/src/components/mindmap/simple-project-panel';
-import {
-  DesignSpaceSurface,
-  type GenerationTrail,
-} from '@/src/components/design-space/design-space-surface';
+import { DesignSpaceSurface } from '@/src/components/design-space/design-space-surface';
 import { useSurfaceQuery } from '@/src/features/design-space/hooks/use-surface-query';
 import {
   nodesToLocateItems,
   useLocateNodesMutation,
 } from '@/src/features/design-space/hooks/use-locate-nodes';
 import { useGenerateAtMutation } from '@/src/features/design-space/hooks/use-generate-at-mutation';
-import type { CoordMap } from '@/src/features/design-space/types';
+import { useCorpusProjectQuery } from '@/src/features/design-space/hooks/use-corpus-project';
+import { CandidatePanel } from '@/src/components/design-space/candidate-panel';
+import { CompareCandidatesDialog } from '@/src/components/design-space/compare-candidates-dialog';
+import {
+  candidateCoordKey,
+  composeCandidateText,
+  indexNodesById,
+} from '@/src/features/design-space/candidate-utils';
+import type { CandidateMarker } from '@/src/components/design-space/design-space-surface';
+import type { CoordMap, GenerationTrail } from '@/src/features/design-space/types';
 import { Badge } from '@/src/components/ui/badge';
 import { Button } from '@/src/components/ui/button';
 import {
@@ -44,12 +50,16 @@ import {
   useGenerateNodesMutation,
 } from '@/src/features/mindmap/hooks/use-generate-nodes-mutation';
 import { useRelatedProjectsQuery } from '@/src/features/mindmap/hooks/use-related-projects-query';
-import type { MindmapNode, MindmapSelection } from '@/src/features/mindmap/types';
+import type {
+  MindmapNode,
+  MindmapSelection,
+  NodeProvenance,
+} from '@/src/features/mindmap/types';
 import { GenerateTaxonomyDialog } from '@/src/features/mindmap/components/generate-taxonomy-dialog';
 import { GenerateNodesDialog } from '@/src/features/mindmap/components/generate-nodes-dialog';
 import type { GenerateNodesParams } from '@/src/features/mindmap/hooks/use-generate-nodes-mutation';
 import { useMindmapStore } from '@/src/store/mindmap-store';
-import type { FetchRelatedProjectsRequestSchema } from '@/src/types/openapi';
+import type { FetchRelatedProjectsRequestSchema } from '@/src/types/api-aliases';
 
 const INITIAL_TOPIC = SCHEMA_MINDMAP_NODES[0]?.topic ?? 'Design Aspects';
 
@@ -75,11 +85,20 @@ const buildRequest = (
   similarity_threshold: 0.0,
 });
 
-function cloneNodes(nodes: ReadonlyArray<MindmapNode>): ReadonlyArray<MindmapNode> {
-  return nodes.map((node) => ({
-    ...node,
-    children: node.children ? cloneNodes(node.children) : undefined,
-  }));
+const PLACEHOLDER_PROJECT_NAME = 'Relevant projects will appear here';
+
+/** Normalise generation-response project rows into provenance seed entries. */
+function toSeedProjects(rows: unknown): NodeProvenance['seedProjects'] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter(
+      (row): row is Record<string, unknown> => typeof row === 'object' && row !== null
+    )
+    .map((row) => ({
+      id: typeof row.id === 'string' && row.id ? row.id : null,
+      name: typeof row.Name === 'string' && row.Name ? row.Name : '(untitled)',
+    }))
+    .filter((seed) => seed.name !== PLACEHOLDER_PROJECT_NAME);
 }
 
 function findNodeByLineage(
@@ -174,37 +193,33 @@ function ensureUniqueChildIds(
   return { children: result, remap };
 }
 
-interface AspectRef {
-  id: string;
-  topic: string;
-  lineage: string[];
-}
-
-/** node id → its depth-1 ancestor (the aspect), or null for the root. */
-function buildAspectIndex(
-  nodes: ReadonlyArray<MindmapNode>
-): Map<string, AspectRef | null> {
-  const index = new Map<string, AspectRef | null>();
-  const walk = (node: MindmapNode, lineage: string[], depth: number, aspect: AspectRef | null) => {
-    const nextLineage = [...lineage, node.topic];
-    const myAspect: AspectRef | null =
-      depth === 1 ? { id: node.id, topic: node.topic, lineage: nextLineage } : aspect;
-    index.set(node.id, myAspect);
-    for (const child of node.children ?? []) walk(child, nextLineage, depth + 1, myAspect);
-  };
-  for (const node of nodes) walk(node, [], 0, null);
-  return index;
-}
-
 export default function MindmapPage() {
   const selectTopic = useMindmapStore((state) => state.selectTopic);
   const taxonomy = useMindmapStore((state) => state.taxonomy);
   const setTaxonomy = useMindmapStore((state) => state.setTaxonomy);
+  // The working tree + exploration state are persisted in the store so that
+  // generated nodes, coordinates, and discovered cells survive a reload.
+  const nodes = useMindmapStore((state) => state.nodes);
+  const setNodes = useMindmapStore((state) => state.setNodes);
+  const coords = useMindmapStore((state) => state.coords);
+  const mergeCoords = useMindmapStore((state) => state.mergeCoords);
+  const removeCoords = useMindmapStore((state) => state.removeCoords);
+  const discovered = useMindmapStore((state) => state.discovered);
+  const recordDiscovery = useMindmapStore((state) => state.recordDiscovery);
+  const provenance = useMindmapStore((state) => state.provenance);
+  const recordProvenance = useMindmapStore((state) => state.recordProvenance);
+  const descriptionById = useMindmapStore((state) => state.descriptionById);
+  const mergeDescriptions = useMindmapStore((state) => state.mergeDescriptions);
+  const candidates = useMindmapStore((state) => state.candidates);
+  const activeCandidateId = useMindmapStore((state) => state.activeCandidateId);
+  const setActiveCandidate = useMindmapStore((state) => state.setActiveCandidate);
+  const createCandidate = useMindmapStore((state) => state.createCandidate);
+  const setChoice = useMindmapStore((state) => state.setChoice);
+  const optionState = useMindmapStore((state) => state.optionState);
+  const rejectOption = useMindmapStore((state) => state.rejectOption);
+  const reopenOption = useMindmapStore((state) => state.reopenOption);
   const { mutateAsync: generateNodes, isPending: isGeneratingNodes } = useGenerateNodesMutation();
 
-  const [nodes, setNodes] = useState<ReadonlyArray<MindmapNode>>(() =>
-    cloneNodes(SCHEMA_MINDMAP_NODES)
-  );
   const [selection, setSelection] = useState<MindmapSelection>({
     topic: INITIAL_SELECTION.topic,
     lineage: [...INITIAL_SELECTION.lineage],
@@ -220,38 +235,51 @@ export default function MindmapPage() {
 
   // ── Design-space view ──────────────────────────────────────────────────────
   const [view, setView] = useState<'map' | 'space'>('map');
-  const [coords, setCoords] = useState<CoordMap>({});
   const [pendingCell, setPendingCell] = useState<[number, number] | null>(null);
-  // The currently-traced connector, and every cell that has generated nodes
-  // (drawn hollow as "discovered"; re-clicking re-traces its line).
+  // The currently-traced connector (transient; the discovered set persists).
   const [activeLine, setActiveLine] = useState<GenerationTrail | null>(null);
-  const [discoveredMap, setDiscoveredMap] = useState<Map<string, GenerationTrail>>(
-    () => new Map()
-  );
-  const discoveredCells = useMemo(() => new Set(discoveredMap.keys()), [discoveredMap]);
-  const { data: surface } = useSurfaceQuery(true);
+  // A corpus project opened for inspection (design-space glyph / provenance chip).
+  const [focusProjectId, setFocusProjectId] = useState<string | null>(null);
+  const { data: focusProject } = useCorpusProjectQuery(focusProjectId);
+  // Fetched on first visit to the space view (cached forever afterwards).
+  const { data: surface } = useSurfaceQuery(view === 'space');
   const { mutateAsync: locateNodes } = useLocateNodesMutation();
   const { mutateAsync: generateAt, isPending: isGeneratingAt } = useGenerateAtMutation();
   const locatingRef = useRef(false);
+  // Cancels the client-side wait on a running generate-at (job completes
+  // server-side but its result is discarded).
+  const generateAbortRef = useRef<AbortController | null>(null);
 
   const attemptedRef = useRef<Set<string>>(new Set());
 
-  useEffect(() => {
-    if (!taxonomy) return;
-    const { nodes: nextNodes } = taxonomyToMindmapNodes(taxonomy);
-    setNodes(nextNodes);
+  // Warns when a generated brief sits far from the background corpus, so the
+  // spatial context isn't read as meaningful where it isn't.
+  const [corpusNotice, setCorpusNotice] = useState<string | null>(null);
+  const CORPUS_SIMILARITY_FLOOR = 0.3;
+
+  const handleTaxonomyGenerated = (
+    result: Parameters<typeof setTaxonomy>[0] & { corpus_similarity?: number | null }
+  ) => {
+    // setTaxonomy rebuilds the tree and wipes coords/discovered/provenance.
+    setTaxonomy(result);
     setSelection({ topic: INITIAL_SELECTION.topic, lineage: [...INITIAL_SELECTION.lineage] });
-    // New taxonomy → invalidate every design-space coordinate.
-    setCoords({});
+    setActiveLine(null);
     attemptedRef.current.clear();
-  }, [taxonomy]);
+    const similarity = result.corpus_similarity;
+    setCorpusNotice(
+      similarity != null && similarity < CORPUS_SIMILARITY_FLOOR
+        ? `This brief sits far from the background corpus (similarity ${similarity.toFixed(2)}). ` +
+            'The design-space surface shows media-architecture projects — its spatial context may not transfer to this domain.'
+        : null
+    );
+  };
 
   // Best-effort: embed + locate any nodes that lack coordinates. Each node is
   // attempted at most once per session; failures (e.g. embedding server down)
   // leave the background surface intact and are retried on the next change.
   useEffect(() => {
     if (!surface) return;
-    const items = nodesToLocateItems(nodes, activeDescriptionByTopic).filter(
+    const items = nodesToLocateItems(nodes, activeDescriptionByTopic, descriptionById).filter(
       (it) => !coords[it.node_id] && !attemptedRef.current.has(it.node_id)
     );
     if (items.length === 0 || locatingRef.current) return;
@@ -259,18 +287,133 @@ export default function MindmapPage() {
     locatingRef.current = true;
     items.forEach((it) => attemptedRef.current.add(it.node_id));
     locateNodes(items)
-      .then((located) => setCoords((prev) => ({ ...prev, ...located })))
+      .then((located) => mergeCoords(located))
       .catch(() => {
         items.forEach((it) => attemptedRef.current.delete(it.node_id));
       })
       .finally(() => {
         locatingRef.current = false;
       });
-  }, [surface, nodes, activeDescriptionByTopic, coords, locateNodes]);
+  }, [surface, nodes, activeDescriptionByTopic, descriptionById, coords, locateNodes, mergeCoords]);
 
-  const description = activeDescriptionByTopic[selection.topic] ?? '';
+  // The currently selected node, its description (id-keyed for generated nodes,
+  // topic-keyed for taxonomy nodes), and its provenance (when generated).
+  // Resolution prefers the exact node id (set by node clicks in either view);
+  // the topic/lineage walk is the fallback for legacy selections.
+  const selectedNode = useMemo(() => {
+    if (selection.nodeId) {
+      const byId = indexNodesById(nodes).get(selection.nodeId);
+      if (byId) return byId;
+    }
+    return findNodeByLineage(nodes, selection.lineage);
+  }, [nodes, selection]);
+  const description =
+    (selectedNode ? descriptionById[selectedNode.id] : undefined) ??
+    activeDescriptionByTopic[selection.topic] ??
+    '';
   const request = buildRequest(selection, description);
   const { data, isFetching } = useRelatedProjectsQuery({ request });
+
+  const selectedProvenance = selectedNode ? provenance[selectedNode.id] : undefined;
+
+  // Corpus ids of the selection's related projects — the panel's examples are
+  // also highlighted as places on the design-space map.
+  const relatedProjectIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const project of data?.projects ?? []) {
+      if (project.Name === PLACEHOLDER_PROJECT_NAME) continue;
+      if (project.id) ids.add(project.id);
+    }
+    return ids;
+  }, [data]);
+
+  // ── Candidates: locate each composed design in the frozen space ─────────────
+  // A candidate's position is the embedding of its combined option text; it is
+  // re-located whenever its composition changes (signature-tracked).
+  const candidateTextSignatures = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (!surface) return;
+    const items: Array<{ node_id: string; text: string }> = [];
+    for (const candidate of Object.values(candidates)) {
+      const text = composeCandidateText(
+        candidate,
+        nodes,
+        activeDescriptionByTopic,
+        descriptionById
+      );
+      const key = candidateCoordKey(candidate.id);
+      if (!text) {
+        candidateTextSignatures.current.delete(candidate.id);
+        continue;
+      }
+      if (candidateTextSignatures.current.get(candidate.id) === text && coords[key]) continue;
+      candidateTextSignatures.current.set(candidate.id, text);
+      items.push({ node_id: key, text });
+    }
+    if (items.length === 0) return;
+    locateNodes(items)
+      .then((located) => mergeCoords(located))
+      .catch(() => {
+        // Allow a retry on the next composition change.
+        for (const it of items) {
+          candidateTextSignatures.current.delete(it.node_id.replace(/^cand:/, ''));
+        }
+      });
+  }, [surface, candidates, nodes, activeDescriptionByTopic, descriptionById, coords, locateNodes, mergeCoords]);
+
+  const candidateMarkers = useMemo<CandidateMarker[]>(() => {
+    const markers: CandidateMarker[] = [];
+    for (const candidate of Object.values(candidates)) {
+      const coord = coords[candidateCoordKey(candidate.id)];
+      if (!coord) continue;
+      markers.push({
+        id: candidate.id,
+        name: candidate.name,
+        x: coord.x,
+        y: coord.y,
+        active: candidate.id === activeCandidateId,
+      });
+    }
+    return markers;
+  }, [candidates, coords, activeCandidateId]);
+
+  const rejectedIds = useMemo(() => new Set(Object.keys(optionState)), [optionState]);
+
+  // Mind-map styling: rejected options muted; the active candidate's choices bold.
+  const nodeStates = useMemo(() => {
+    const states: Record<string, 'rejected' | 'chosen'> = {};
+    const active = activeCandidateId ? candidates[activeCandidateId] : undefined;
+    for (const optionId of Object.values(active?.choices ?? {})) states[optionId] = 'chosen';
+    for (const nodeId of Object.keys(optionState)) states[nodeId] = 'rejected';
+    return states;
+  }, [activeCandidateId, candidates, optionState]);
+
+  // ── Option actions (choose / reject) for the selected node ──────────────────
+  // An "option" is any non-root, non-aspect node: lineage [root, aspect, ...].
+  const selectedAspect = useMemo(
+    () =>
+      selection.lineage.length >= 3
+        ? findNodeByLineage(nodes, selection.lineage.slice(0, 2))
+        : null,
+    [nodes, selection.lineage]
+  );
+  const isOptionSelected = Boolean(selectedNode && selectedAspect);
+  const activeCandidate = activeCandidateId ? candidates[activeCandidateId] : undefined;
+  const isChosen = Boolean(
+    selectedNode &&
+      selectedAspect &&
+      activeCandidate?.choices[selectedAspect.id] === selectedNode.id
+  );
+  const selectedRejection = selectedNode ? optionState[selectedNode.id] : undefined;
+  const [rejectReason, setRejectReason] = useState('');
+  const [showRejectInput, setShowRejectInput] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
+
+  const handleChooseOption = () => {
+    if (!selectedNode || !selectedAspect) return;
+    if (!activeCandidateId || !candidates[activeCandidateId]) createCandidate();
+    setChoice(selectedAspect.id, isChosen ? null : selectedNode.id);
+  };
 
   useEffect(() => {
     selectTopic({
@@ -284,34 +427,51 @@ export default function MindmapPage() {
     setSelection({
       topic: nextSelection.topic,
       lineage: [...nextSelection.lineage],
+      ...(nextSelection.nodeId ? { nodeId: nextSelection.nodeId } : {}),
     });
     setActiveLine(null); // a fresh selection clears any traced connector
   };
+
+  // Structural edits from mind-elixir. A rename invalidates the node's position
+  // (it was embedded from the old text) — drop the coord + attempted flag so the
+  // node re-locates with its new label.
+  const handleNodesChange = useCallback(
+    (nextNodes: ReadonlyArray<MindmapNode>) => {
+      const prevTopics = new Map<string, string>();
+      const collect = (node: MindmapNode) => {
+        prevTopics.set(node.id, node.topic);
+        for (const child of node.children ?? []) collect(child);
+      };
+      for (const node of nodes) collect(node);
+
+      const renamed: string[] = [];
+      const diff = (node: MindmapNode) => {
+        const prev = prevTopics.get(node.id);
+        if (prev !== undefined && prev !== node.topic) renamed.push(node.id);
+        for (const child of node.children ?? []) diff(child);
+      };
+      for (const node of nextNodes) diff(node);
+
+      if (renamed.length > 0) {
+        removeCoords(renamed);
+        renamed.forEach((id) => attemptedRef.current.delete(id));
+      }
+      setNodes(nextNodes);
+    },
+    [nodes, removeCoords, setNodes]
+  );
 
   const handleGenerateAt = useCallback(
     async (x: number, y: number) => {
       if (!surface) return;
 
-      // Spatial intent: attach new options under the ASPECT nearest the clicked
-      // dot — keeps the 2-level structure (options under their branch, matching
-      // color) instead of dumping them under whatever node happens to be selected.
-      const aspectIndex = buildAspectIndex(nodes);
-      let nearestId: string | null = null;
-      let bestDist = Infinity;
-      for (const [id, c] of Object.entries(coords)) {
-        const d = (c.x - x) ** 2 + (c.y - y) ** 2;
-        if (d < bestDist) {
-          bestDist = d;
-          nearestId = id;
-        }
-      }
-      const nearestAspect = nearestId ? aspectIndex.get(nearestId) ?? null : null;
-      const fallback = findNodeByLineage(nodes, selection.lineage);
-      const focusId = nearestAspect?.id ?? fallback?.id;
-      const focusTopic = nearestAspect?.topic ?? fallback?.topic;
-      const focusLineage = nearestAspect?.lineage ?? selection.lineage;
-      if (!focusId || !focusTopic) {
-        setGenerateError('No aspect found nearby to attach generated options to.');
+      // The backend derives the parent aspect from the click + current node
+      // coordinates (one spatial notion of "here", shared with the seeds); the
+      // current selection is only the fallback focus when nothing is located.
+      const fallback =
+        findNodeByLineage(nodes, selection.lineage) ?? (nodes[0] ?? null);
+      if (!fallback) {
+        setGenerateError('No node available to attach generated options to.');
         return;
       }
 
@@ -323,13 +483,18 @@ export default function MindmapPage() {
       // the click and the generated children — so highlighting it looked like a
       // random, unconnected glow. The clicked cell glows instead (via the trail).
 
+      const abort = new AbortController();
+      generateAbortRef.current = abort;
+
       try {
         const response = await generateAt({
           x,
           y,
           allNodes: nodes,
-          focusNode: { id: focusId, topic: focusTopic },
-          lineage: focusLineage,
+          focusNode: { id: fallback.id, topic: fallback.topic },
+          lineage: selection.lineage.length ? selection.lineage : [fallback.topic],
+          coords,
+          signal: abort.signal,
         });
 
         const rawChildren: MindmapNode[] = response.nodes.map((n) => ({
@@ -344,15 +509,43 @@ export default function MindmapPage() {
         }
         setNodes(treeUpdate.nodes);
 
+        // Provenance: every generated node remembers the precedents that seeded
+        // it and the location that was clicked.
+        const seedProjects = toSeedProjects(response.seed_neighbours);
+        const provenanceEntries: Record<string, NodeProvenance> = {};
+        for (const child of children) {
+          provenanceEntries[child.id] = {
+            source: 'generate-at',
+            seedProjects,
+            target: { x, y },
+            createdAt: Date.now(),
+          };
+        }
+        recordProvenance(provenanceEntries);
+
+        // Generated descriptions (id-keyed; remap-aware) — used for the Context
+        // panel, retrieval, and any future re-locate of these nodes.
+        const descriptionEntries: Record<string, string> = {};
+        for (const n of response.nodes) {
+          const id = remap[n.node_id] ?? n.node_id;
+          if (n.desc) descriptionEntries[id] = n.desc;
+        }
+        mergeDescriptions(descriptionEntries);
+
         // Coordinates come back with the generation — no extra /locate call.
         // Keep them aligned with any ids that were remapped to stay unique.
         const merged: CoordMap = {};
         for (const c of response.coords) {
           const id = remap[c.node_id] ?? c.node_id;
-          merged[id] = { x: c.x, y: c.y, ...(c.z != null ? { z: c.z } : {}) };
+          merged[id] = {
+            x: c.x,
+            y: c.y,
+            ...(c.z != null ? { z: c.z } : {}),
+            ...(c.confidence != null ? { confidence: c.confidence } : {}),
+          };
           attemptedRef.current.add(id);
         }
-        setCoords((prev) => ({ ...prev, ...merged }));
+        mergeCoords(merged);
 
         // Mark the clicked cell "discovered" (drawn hollow) and store + show the
         // connector to where the nodes landed, so the (often distant) placement is
@@ -362,20 +555,33 @@ export default function MindmapPage() {
           const line: GenerationTrail = {
             from: { x, y },
             to: targets.map((c) => ({ x: c.x, y: c.y })),
+            meanDrift: response.mean_drift ?? null,
           };
           const cellKey = `${Math.floor(x * resolution)},${Math.floor(y * resolution)}`;
-          setDiscoveredMap((prev) => new Map(prev).set(cellKey, line));
+          recordDiscovery(cellKey, line);
           setActiveLine(line);
         }
       } catch (error) {
-        setGenerateError(
-          error instanceof Error ? error.message : 'Failed to generate at location.'
-        );
+        const message = error instanceof Error ? error.message : 'Failed to generate at location.';
+        // A user-initiated cancel is not an error worth alarming about.
+        if (!/cancelled/i.test(message)) setGenerateError(message);
       } finally {
+        generateAbortRef.current = null;
         setPendingCell(null);
       }
     },
-    [surface, nodes, coords, selection, generateAt]
+    [
+      surface,
+      nodes,
+      coords,
+      selection,
+      generateAt,
+      setNodes,
+      mergeCoords,
+      recordDiscovery,
+      recordProvenance,
+      mergeDescriptions,
+    ]
   );
 
   const handleGenerateNodes = async (
@@ -393,7 +599,7 @@ export default function MindmapPage() {
     try {
       const fetchedProjects = data?.projects ?? [];
       const hasRealProjects = fetchedProjects.some(
-        (p) => p.Name !== 'Relevant projects will appear here'
+        (p) => p.Name !== PLACEHOLDER_PROJECT_NAME
       );
       const relatedProjects = hasRealProjects ? fetchedProjects : null;
 
@@ -409,7 +615,7 @@ export default function MindmapPage() {
         reasoningEffort: dialogParams?.reasoningEffort,
       });
 
-      const { children: generatedChildren } = ensureUniqueChildIds(
+      const { children: generatedChildren, remap } = ensureUniqueChildIds(
         nodes,
         generatedNodesToMindmapNodes(response)
       );
@@ -420,6 +626,26 @@ export default function MindmapPage() {
       }
 
       setNodes(treeUpdate.nodes);
+
+      // Provenance: record which related projects seeded these options.
+      const seedProjects = toSeedProjects(response.related_projects);
+      const provenanceEntries: Record<string, NodeProvenance> = {};
+      for (const child of generatedChildren) {
+        provenanceEntries[child.id] = {
+          source: 'generate-nodes',
+          seedProjects,
+          createdAt: Date.now(),
+        };
+      }
+      recordProvenance(provenanceEntries);
+
+      // Generated descriptions (id-keyed; remap-aware).
+      const descriptionEntries: Record<string, string> = {};
+      for (const n of response.nodes) {
+        const id = remap[n.node_id] ?? n.node_id;
+        if (n.desc) descriptionEntries[id] = n.desc;
+      }
+      mergeDescriptions(descriptionEntries);
     } catch (error) {
       setGenerateError(
         error instanceof Error ? error.message : 'Failed to generate nodes. Please try again.'
@@ -534,9 +760,103 @@ export default function MindmapPage() {
                     ))}
                   </div>
 
+                  {corpusNotice ? (
+                    <p className="rounded-lg bg-amber-500/10 p-2.5 text-xs leading-snug text-amber-700">
+                      {corpusNotice}
+                    </p>
+                  ) : null}
+
                   {description ? (
                     <div className="space-y-1 text-sm leading-relaxed">
                       <p className="text-muted-foreground">{description}</p>
+                    </div>
+                  ) : null}
+
+                  {selectedProvenance && selectedProvenance.seedProjects.length > 0 ? (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Seeded by{' '}
+                        {selectedProvenance.source === 'generate-at'
+                          ? 'projects near the clicked location'
+                          : 'related projects'}
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {selectedProvenance.seedProjects.map((seed, idx) => (
+                          <button
+                            key={`${seed.id ?? seed.name}-${idx}`}
+                            type="button"
+                            disabled={!seed.id}
+                            onClick={() => seed.id && setFocusProjectId(seed.id)}
+                            className="rounded-full border bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-foreground transition-colors enabled:hover:bg-muted disabled:cursor-default disabled:opacity-60"
+                            title={seed.id ? 'View this project' : undefined}
+                          >
+                            {seed.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {isOptionSelected && selectedNode && selectedAspect ? (
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={handleChooseOption}
+                          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                            isChosen
+                              ? 'border-violet-500 bg-violet-500/10 text-violet-700 hover:bg-violet-500/20'
+                              : 'text-foreground hover:bg-muted'
+                          }`}
+                        >
+                          {isChosen
+                            ? `✓ Chosen for ${selectedAspect.topic}`
+                            : `Choose for ${selectedAspect.topic}`}
+                        </button>
+                        {selectedRejection ? (
+                          <button
+                            type="button"
+                            onClick={() => reopenOption(selectedNode.id)}
+                            className="rounded-full border px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted"
+                          >
+                            Reopen
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setShowRejectInput((v) => !v)}
+                            className="rounded-full border px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            Reject…
+                          </button>
+                        )}
+                      </div>
+                      {selectedRejection ? (
+                        <p className="text-[11px] text-destructive">
+                          Rejected{selectedRejection.reason ? ` — ${selectedRejection.reason}` : ''}
+                        </p>
+                      ) : null}
+                      {showRejectInput && !selectedRejection ? (
+                        <form
+                          className="flex items-center gap-1.5"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            rejectOption(selectedNode.id, rejectReason.trim() || undefined);
+                            setRejectReason('');
+                            setShowRejectInput(false);
+                          }}
+                        >
+                          <input
+                            value={rejectReason}
+                            onChange={(e) => setRejectReason(e.target.value)}
+                            placeholder="Why rule this out? (optional)"
+                            className="h-7 flex-1 rounded-md border bg-background px-2 text-[11px]"
+                          />
+                          <Button type="submit" size="sm" variant="destructive" className="h-7 px-2.5 text-[11px]">
+                            Reject
+                          </Button>
+                        </form>
+                      ) : null}
                     </div>
                   ) : null}
 
@@ -558,6 +878,15 @@ export default function MindmapPage() {
             </CollapsibleContent>
           </section>
         </Collapsible>
+
+        {/* Candidate composition panel */}
+        <div className="mt-3">
+          <CandidatePanel
+            descriptionByTopic={activeDescriptionByTopic}
+            onOpenProject={setFocusProjectId}
+            onOpenCompare={() => setCompareOpen(true)}
+          />
+        </div>
       </div>
 
       {/* Main view layer — mind map and design space share nodes + selection */}
@@ -571,15 +900,21 @@ export default function MindmapPage() {
               selection={selection}
               onSelectNode={handleSelect}
               onGenerateAt={handleGenerateAt}
+              onSelectProject={setFocusProjectId}
               isGenerating={isGeneratingAt}
               pendingCell={pendingCell}
               trail={activeLine}
-              discovered={discoveredCells}
-              onShowDiscovery={(key) => setActiveLine(discoveredMap.get(key) ?? null)}
+              discovered={discovered}
+              onShowDiscovery={(key) => setActiveLine(discovered[key] ?? null)}
               onBackgroundClick={() => {
                 setSelection({ topic: '', lineage: [] });
                 setActiveLine(null);
               }}
+              candidates={candidateMarkers}
+              onSelectCandidate={setActiveCandidate}
+              rejected={rejectedIds}
+              onCancelGenerate={() => generateAbortRef.current?.abort()}
+              relatedProjects={relatedProjectIds}
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center p-8 text-center">
@@ -597,10 +932,11 @@ export default function MindmapPage() {
             nodes={nodes}
             activeTopic={selection.topic}
             onSelect={handleSelect}
-            onDataChange={setNodes}
+            onDataChange={handleNodesChange}
             generatingNodeId={
               isGeneratingNodes ? findNodeByLineage(nodes, selection.lineage)?.id ?? null : null
             }
+            nodeStates={nodeStates}
           />
         )}
       </div>
@@ -608,7 +944,7 @@ export default function MindmapPage() {
       <GenerateTaxonomyDialog
         open={taxonomyDialogOpen}
         onOpenChange={setTaxonomyDialogOpen}
-        onSuccess={setTaxonomy}
+        onSuccess={handleTaxonomyGenerated}
       />
 
       <GenerateNodesDialog
@@ -617,6 +953,12 @@ export default function MindmapPage() {
         onConfirm={handleGenerateNodes}
         isPending={isGeneratingNodes}
         selectedTopic={selection.topic}
+      />
+
+      <CompareCandidatesDialog
+        open={compareOpen}
+        onOpenChange={setCompareOpen}
+        descriptionByTopic={activeDescriptionByTopic}
       />
 
       {/* Floating Related Projects Panel */}
@@ -648,6 +990,7 @@ export default function MindmapPage() {
                   <SimpleProjectPanel
                     projects={data?.projects ?? []}
                     isLoading={isFetching}
+                    focusProject={focusProject ?? null}
                   />
                 </div>
               </ScrollArea>

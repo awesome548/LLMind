@@ -109,16 +109,43 @@ curl -s -X POST http://localhost:8000/api/related-projects/generate-nodes \
 
 Frozen 2D projection of the project corpus for the design-space visualization. Fit
 once with the CLI (`uv run python database_pipeline.py project`), then served/queried
-at runtime. See [`../DESIGN-SPACE-VIZ.md`](../DESIGN-SPACE-VIZ.md).
+at runtime. See [`../DESIGN-SPACE-VIZ.md`](../DESIGN-SPACE-VIZ.md) and
+[`../DESIGN-SPACE-ITERATION-PLAN.md`](../DESIGN-SPACE-ITERATION-PLAN.md).
 
 | Endpoint | Purpose | Needs embed/LLM server |
 |---|---|---|
-| `GET /api/projection/surface` | Precomputed corpus background: grid spec, points, density | No |
-| `POST /api/projection/locate` | Embed taxonomy-node text → coords in the frozen space (`{items:[{node_id,text}]}`) | Yes (embed) |
-| `POST /api/projection/generate-at` | **Async.** Spatial-neighbour RAG: clicked `(x,y)` → new child nodes of a focus node, with coords | Yes (embed + LLM) |
+| `GET /api/projection/surface` | Precomputed corpus background: grid spec, points, density; `meta.trustworthiness` reports layout fidelity | No |
+| `POST /api/projection/locate` | Embed node text → coords in the frozen space (`{items:[{node_id,text}]}`); each point carries `confidence` (true-vs-2D neighbourhood Jaccard, None = unscorable) | Yes (embed) |
+| `POST /api/projection/generate-at` | **Async.** Location-conditioned generation: clicked `(x,y)` + optional `coords` (located nodes) → seeds that **bracket** the gap, parent aspect **derived from the click**, options with `desc`, per-node `drift` + `mean_drift` | Yes (embed + LLM) |
+
+`generate-at` behaviour: seeds come from `seed_corpus` (`SEED_STRATEGY=bracket` default,
+`anchor` = legacy single-neighbourhood; switchable for A/B). Every call appends a JSONL
+row to `data/projection/generate_log.jsonl` (`prompt_version`, `seed_strategy`, target,
+seeds, per-node drift) — the evaluation dataset for prompt/seeding variants.
 
 `surface`/`locate` return `502` with `ServiceError` detail on failure. Artifacts live in
 `data/projection/` (`model.joblib`, `surface.json`); path is `settings.projection_dir`.
+
+### Corpus
+
+| Endpoint | Purpose | Needs embed server |
+|---|---|---|
+| `GET /api/corpus/projects/{id}` | One corpus project's metadata (the inspectable design-space dots) | No |
+| `POST /api/corpus/similar` | `{text, k}` → closest corpus precedents by TRUE cosine similarity (used for candidate designs) | Yes |
+
+### Taxonomy extras
+
+`POST /api/taxonomy/generate` additionally returns `corpus_similarity` — cosine of the
+project overview to the corpus centroid (best-effort; `null` when the embedding server
+is down). The frontend shows a domain-mismatch notice below ~0.3.
+
+### Calibration
+
+```bash
+uv run python database_pipeline.py project-calibrate   # needs the embedding server
+```
+Re-locates every corpus project by a SHORT text (its name) and reports displacement
+from its true coordinate — quantifies how trustworthy short-text node placement is.
 
 ### Async generation (jobs)
 
@@ -136,8 +163,9 @@ process-local (single-process server only), pruned after 30 min.
 | Layer | Location | Responsibility |
 |---|---|---|
 | Entry point | `backend/main.py` | Mounts routers; CORS (browser calls backend directly) |
-| Router/Service — projection | `backend/projection/{router,service}.py` | Surface, node location, generate-at (spatial RAG) |
-| Projection core | `pipeline/projection.py` | Frozen PCA→UMAP reducer, persistence, grid, density, nearest |
+| Router/Service — projection | `backend/projection/{router,service}.py` | Surface, node location (+confidence), generate-at (bracket seeds, derived parent, drift, JSONL log) |
+| Router/Service — corpus | `backend/corpus/{router,service}.py` | Corpus metadata reader (shared), project-by-id, true-metric similarity search |
+| Projection core | `pipeline/projection.py` | Frozen PCA→UMAP reducer, persistence, grid, density, nearest, trustworthiness |
 | Async jobs | `backend/jobs.py` + `backend/jobs_router.py` | Background thread pool + `GET /api/jobs/{id}` polling for long generation |
 | Config | `config.py` | Single `Settings` instance via pydantic-settings |
 | Router — taxonomy | `backend/taxonomy/router.py` | Request validation; catches `TaxonomyServiceError` → 502 |
@@ -169,6 +197,7 @@ All loaded from `.env` in `llmind-python/`. Override any by setting the env var.
 | `VLLM_BASE_URL` | `http://100.73.44.12:8001/v1` | No | Change to `http://localhost:8001/v1` for local dev |
 | `VLLM_MODEL` | `qwen` | No | |
 | `VLLM_EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | No | |
+| `SEED_STRATEGY` | `bracket` | No | generate-at seeding: `bracket` (surround the gap) or `anchor` (legacy) |
 | `DATA_DIR` | `data` | No | Root for data files |
 | `TAXONOMY_DIR` | `taxonomy` | No | Output path for generated taxonomies |
 

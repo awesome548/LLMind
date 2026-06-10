@@ -4,7 +4,7 @@ import type {
   GenerateNodesRequestSchema,
   GenerateNodesResponseSchema,
   TaxonomyNodeInputSchema,
-} from '@/src/types/openapi';
+} from '@/src/types/api-aliases';
 import type { MindmapNode } from '../types';
 
 // ── Utilities ────────────────────────────────────────────────────────────────

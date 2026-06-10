@@ -3,7 +3,7 @@ import api from '@/src/lib/api-client';
 import type {
   FetchRelatedProjectsRequestSchema,
   FetchRelatedProjectsResponseSchema,
-} from '@/src/types/openapi';
+} from '@/src/types/api-aliases';
 
 const DEFAULT_LIMIT = 5;
 const DEFAULT_SIMILARITY_THRESHOLD = 0.0;

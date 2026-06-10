@@ -21,6 +21,12 @@ class ServiceError(RuntimeError):
 class NodeOption(BaseModel):
     id: str = Field(min_length=1)
     topic: str = Field(min_length=1)
+    # One-sentence description; embedded (with the topic) to position the option
+    # in the design space and to seed later retrieval. Required with no default —
+    # structured-output strict mode drops defaulted fields from ``required``
+    # (see CLAUDE.md schema rules) — but unconstrained, so an empty string
+    # degrades placement quality instead of failing the whole generation.
+    desc: str
 
 
 class NodeGenerationPayload(BaseModel):
@@ -395,7 +401,16 @@ def generate_nodes_from_related_projects(
     mode: BackendMode = BackendMode.openai,
     base_url: str | None = None,
     reasoning_effort: str = "medium",
+    prompt_template: str | None = None,
+    extra_template_fields: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    """Generate child options for a focus node, seeded by related projects.
+
+    ``prompt_template`` defaults to the aspect-exploration prompt; the design
+    space passes its own location-conditioned template (with
+    ``extra_template_fields`` for placeholders the default prompt lacks, e.g.
+    ``{{NEARBY_OPTIONS}}``).
+    """
     if not focus_node_id.strip() or not focus_node_topic.strip():
         raise ServiceError("Focus node id and topic are required.")
 
@@ -419,12 +434,15 @@ def generate_nodes_from_related_projects(
     )
     related_projects_section = _format_projects_for_prompt(resolved_projects)
 
+    template = prompt_template or USER_PROMPT_TEMPLATE
     user_prompt = (
-        USER_PROMPT_TEMPLATE.replace("{{TAXONOMY}}", formatted_taxonomy)
+        template.replace("{{TAXONOMY}}", formatted_taxonomy)
         .replace("{{SELECTED_NODE_TOPIC}}", focus_node_topic)
         .replace("{{SELECTED_NODE_ID}}", focus_node_id)
         .replace("{{RELATED_PROJECTS}}", related_projects_section)
     )
+    for placeholder, value in (extra_template_fields or {}).items():
+        user_prompt = user_prompt.replace(f"{{{{{placeholder}}}}}", value)
 
     resolved_model = model or settings.openai_node_model
 
@@ -445,6 +463,7 @@ def generate_nodes_from_related_projects(
             {
                 "node_id": opt.id,
                 "topic": opt.topic,
+                "desc": opt.desc.strip(),
                 "parent_node": focus_node_id,
             }
             for opt in parsed.options

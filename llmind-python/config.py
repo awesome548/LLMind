@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     # Anchored to ``data/`` (like local_index_path) rather than data_dir so it
     # sits next to the index it is fit from and is independent of DATA_DIR.
     projection_dir: Path = Path("data") / "projection"
+    # generate-at seeding: "bracket" = anchors spread around the clicked gap,
+    # each deepened by its true-metric neighbour; "anchor" = legacy behaviour
+    # (cluster around the single nearest project). Kept switchable for A/B
+    # comparison via data/projection/generate_log.jsonl.
+    seed_strategy: str = "bracket"
 
     # ── Scraper ───────────────────────────────────────────────────────────────
     base_url: str = "https://awards.mediaarchitecture.org"

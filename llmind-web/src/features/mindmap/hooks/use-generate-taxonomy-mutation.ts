@@ -24,6 +24,10 @@ export interface TaxonomyAspect {
 
 export interface GenerateTaxonomyResponse {
   aspects: TaxonomyAspect[];
+  /** Cosine similarity of the brief to the corpus centroid (original metric).
+   * Low values mean the design-space background may not apply to this brief.
+   * Null/undefined = unscored (embedding server unavailable). */
+  corpus_similarity?: number | null;
 }
 
 const generateTaxonomy = async (

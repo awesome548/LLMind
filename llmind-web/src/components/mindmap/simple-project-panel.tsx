@@ -2,11 +2,14 @@
 
 import { useState } from 'react';
 import { cn } from '@/src/lib/utils';
-import type { MindmapProjectSchema } from '@/src/types/openapi';
+import type { MindmapProjectSchema } from '@/src/types/api-aliases';
 
 interface SimpleProjectPanelProps {
   projects: ReadonlyArray<MindmapProjectSchema>;
   isLoading?: boolean;
+  /** A corpus project opened from the design space (or a provenance chip) —
+   * shown at the top of the list and auto-selected when it changes. */
+  focusProject?: MindmapProjectSchema | null;
 }
 
 type LooseProjectRecord = MindmapProjectSchema & Record<string, unknown>;
@@ -160,10 +163,28 @@ function ProjectDetail({ project }: ProjectDetailProps) {
   );
 }
 
-export function SimpleProjectPanel({ projects, isLoading = false }: SimpleProjectPanelProps) {
+export function SimpleProjectPanel({
+  projects,
+  isLoading = false,
+  focusProject = null,
+}: SimpleProjectPanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const items = projects.map(toProjectListItem);
+  const focusItem = focusProject ? toProjectListItem(focusProject, -1) : null;
+  // Auto-select the focused project whenever a new one is opened (state adjusted
+  // during render — no effect, no cascading re-render).
+  const focusId = focusItem?.id ?? null;
+  const [lastFocusId, setLastFocusId] = useState<string | null>(null);
+  if (focusId !== lastFocusId) {
+    setLastFocusId(focusId);
+    if (focusId) setSelectedId(focusId);
+  }
+
+  const related = projects.map(toProjectListItem);
+  const items =
+    focusItem && !related.some((item) => item.id === focusItem.id)
+      ? [focusItem, ...related]
+      : related;
   const activeId = items.some((item) => item.id === selectedId)
     ? selectedId
     : (items[0]?.id ?? null);

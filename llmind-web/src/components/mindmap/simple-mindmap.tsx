@@ -18,6 +18,9 @@ interface SimpleMindMapProps {
   onDataChange?: (nodes: ReadonlyArray<MindmapNode>) => void;
   /** Id of the node currently having children generated — shows a spinner on it. */
   generatingNodeId?: string | null;
+  /** node id → pruning/composition state; rejected nodes render muted, chosen
+   * (in the active candidate) render emphasized. */
+  nodeStates?: Readonly<Record<string, 'rejected' | 'chosen'>>;
 }
 
 interface MindElixirModel {
@@ -34,7 +37,8 @@ function convertNode(
   lineageById: Record<string, string[]>,
   topicToId: Record<string, string>,
   depth: number,
-  branchIndex: number
+  branchIndex: number,
+  nodeStates: Readonly<Record<string, 'rejected' | 'chosen'>>
 ): object {
   const lineage = [...parentLineage, node.topic];
   lineageById[node.id] = lineage;
@@ -43,17 +47,25 @@ function convertNode(
   const children = (node.children ?? []).map((child, i) =>
     // Top-level children define the branch index; descendants inherit it —
     // mirrors the design space so the same node is the same color in both.
-    convertNode(child, lineage, lineageById, topicToId, depth + 1, depth === 0 ? i : branchIndex)
+    convertNode(child, lineage, lineageById, topicToId, depth + 1, depth === 0 ? i : branchIndex, nodeStates)
   );
-  const style = {
-    background: nodeColor(branchIndex, depth),
-    color: nodeTextColor(branchIndex, depth),
-  };
+  const state = nodeStates[node.id];
+  const style =
+    state === 'rejected'
+      ? { background: '#e2e8f0', color: '#94a3b8' } // muted — pruned from the space
+      : {
+          background: nodeColor(branchIndex, depth),
+          color: nodeTextColor(branchIndex, depth),
+          ...(state === 'chosen' ? { fontWeight: '700' } : {}),
+        };
   const base = { id: node.id, topic: node.topic, style };
   return children.length ? { ...base, children } : base;
 }
 
-function buildModel(nodes: ReadonlyArray<MindmapNode>): MindElixirModel {
+function buildModel(
+  nodes: ReadonlyArray<MindmapNode>,
+  nodeStates: Readonly<Record<string, 'rejected' | 'chosen'>>
+): MindElixirModel {
   const lineageById: Record<string, string[]> = {};
   const topicToId: Record<string, string> = {};
 
@@ -64,14 +76,14 @@ function buildModel(nodes: ReadonlyArray<MindmapNode>): MindElixirModel {
   }
 
   if (nodes.length === 1) {
-    const nodeData = convertNode(nodes[0]!, [], lineageById, topicToId, 0, -1) as MindElixirData['nodeData'];
+    const nodeData = convertNode(nodes[0]!, [], lineageById, topicToId, 0, -1, nodeStates) as MindElixirData['nodeData'];
     return { data: { nodeData }, lineageById, topicToId };
   }
 
   // Multiple root nodes — wrap in synthetic root; each top-level node is a branch.
   lineageById[SYNTHETIC_ROOT_ID] = ['Mind Map'];
   topicToId['Mind Map'] = SYNTHETIC_ROOT_ID;
-  const children = nodes.map((n, i) => convertNode(n, ['Mind Map'], lineageById, topicToId, 1, i));
+  const children = nodes.map((n, i) => convertNode(n, ['Mind Map'], lineageById, topicToId, 1, i, nodeStates));
   const nodeData = { id: SYNTHETIC_ROOT_ID, topic: 'Mind Map', children } as MindElixirData['nodeData'];
   return { data: { nodeData }, lineageById, topicToId };
 }
@@ -98,12 +110,15 @@ function buildLineageFromParent(node: NodeObj): string[] {
     : [node.topic];
 }
 
+const EMPTY_NODE_STATES: Readonly<Record<string, 'rejected' | 'chosen'>> = {};
+
 export function SimpleMindMap({
   nodes,
   activeTopic,
   onSelect,
   onDataChange,
   generatingNodeId = null,
+  nodeStates = EMPTY_NODE_STATES,
 }: SimpleMindMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mindRef = useRef<MindElixirInstance | null>(null);
@@ -111,7 +126,7 @@ export function SimpleMindMap({
   const onDataChangeRef = useRef(onDataChange);
   const isSyncingRef = useRef(false);
   const skipRefreshRef = useRef(false);
-  const model = useMemo(() => buildModel(nodes), [nodes]);
+  const model = useMemo(() => buildModel(nodes, nodeStates), [nodes, nodeStates]);
   const modelRef = useRef(model);
   const [genPos, setGenPos] = useState<{ x: number; y: number } | null>(null);
 
@@ -149,7 +164,7 @@ export function SimpleMindMap({
       const nodeObj = el?.nodeObj as NodeObj | undefined;
       if (!nodeObj) return;
       const lineage = modelRef.current.lineageById[nodeObj.id] ?? buildLineageFromParent(nodeObj);
-      onSelectRef.current({ topic: nodeObj.topic, lineage: [...lineage] });
+      onSelectRef.current({ topic: nodeObj.topic, lineage: [...lineage], nodeId: nodeObj.id });
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

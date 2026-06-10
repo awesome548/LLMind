@@ -12,15 +12,17 @@ export interface LocateItem {
 /**
  * Flatten a mind-map tree into locate items. Each node is embedded as
  * `topic` plus its description (when available) — the same text the taxonomy
- * carries for embedding-based retrieval.
+ * carries for embedding-based retrieval. Id-keyed descriptions (generated
+ * nodes) take precedence over topic-keyed ones (taxonomy nodes).
  */
 export function nodesToLocateItems(
   nodes: ReadonlyArray<MindmapNode>,
-  descriptionByTopic: Readonly<Record<string, string>> = {}
+  descriptionByTopic: Readonly<Record<string, string>> = {},
+  descriptionById: Readonly<Record<string, string>> = {}
 ): LocateItem[] {
   const items: LocateItem[] = [];
   const walk = (node: MindmapNode) => {
-    const desc = descriptionByTopic[node.topic] ?? '';
+    const desc = descriptionById[node.id] ?? descriptionByTopic[node.topic] ?? '';
     const text = desc ? `${node.topic}. ${desc}` : node.topic;
     items.push({ node_id: node.id, text });
     for (const child of node.children ?? []) walk(child);
@@ -35,7 +37,12 @@ const locateNodes = async (items: LocateItem[]): Promise<CoordMap> => {
     const { data } = await api.post<LocateResponse>('/api/projection/locate', { items });
     const coords: CoordMap = {};
     for (const p of data.points) {
-      coords[p.node_id] = { x: p.x, y: p.y, ...(p.z != null ? { z: p.z } : {}) };
+      coords[p.node_id] = {
+        x: p.x,
+        y: p.y,
+        ...(p.z != null ? { z: p.z } : {}),
+        ...(p.confidence != null ? { confidence: p.confidence } : {}),
+      };
     }
     return coords;
   } catch (error) {

@@ -19,19 +19,22 @@ Next.js 16 frontend. React 19, Bun, TanStack Query, Zustand.
 
 | Layer | Location | Responsibility |
 |---|---|---|
-| Types | `src/types/openapi.ts` | Auto-generated from backend OpenAPI spec — **do not edit manually** |
-| API client | `src/lib/api-client.ts` | Axios instance; `baseURL: '/'` (proxied by Next.js) |
+| Types — generated | `src/types/openapi.ts` | Auto-generated from backend OpenAPI spec — **do not edit manually** |
+| Types — aliases | `src/types/api-aliases.ts` | Regen-safe aliases over `openapi.ts` + hand-written async **job result** shapes (invisible to OpenAPI). App code imports from here, never from `openapi.ts`. |
+| API client | `src/lib/api-client.ts` | Axios instance; calls the backend directly (see CLAUDE.md) |
 | Hooks — queries | `src/features/mindmap/hooks/use-related-projects-query.ts` | React Query: fetch related projects on topic select |
-| Hooks — mutations | `src/features/mindmap/hooks/use-generate-nodes-mutation.ts` | React Query: generate child nodes via LLM |
-| Hooks — mutations | `src/features/mindmap/hooks/use-generate-taxonomy-mutation.ts` | React Query: generate full taxonomy from project overview |
-| Store | `src/store/mindmap-store.ts` | Zustand; persists selection, projects, and generated taxonomy |
-| Components | `src/components/mindmap/` | `SimpleMindMap` (mind-elixir wrapper), `SimpleProjectPanel` |
+| Hooks — mutations | `src/features/mindmap/hooks/use-generate-nodes-mutation.ts` | React Query: generate child nodes via LLM (async job) |
+| Hooks — mutations | `src/features/mindmap/hooks/use-generate-taxonomy-mutation.ts` | React Query: generate full taxonomy (returns `corpus_similarity` for the domain notice) |
+| Store | `src/store/mindmap-store.ts` | Zustand v2; persists the WHOLE exploration — tree, coords, discovered, provenance, candidates, pruning (see ZUSTAND.md) |
+| Components | `src/components/mindmap/` | `SimpleMindMap` (mind-elixir wrapper; `nodeStates` styles rejected/chosen), `SimpleProjectPanel` (accepts `focusProject`) |
 | Dialog | `src/features/mindmap/components/generate-taxonomy-dialog.tsx` | Taxonomy generation form (project overview, reasoning, mode) |
 | Data | `src/features/mindmap/data/schema-mindmap-data.ts` | Static initial taxonomy + `taxonomyToMindmapNodes()` converter |
 | Page | `src/app/mindmap/page.tsx` | Main orchestrator — wires store, hooks, components; Mind Map ⇄ Design Space toggle |
-| Design space — surface | `src/components/design-space/design-space-surface.tsx` | SVG lattice: heat-shaded corpus background, branch-colored node dots, empty-cell generation |
-| Design space — hooks | `src/features/design-space/hooks/` | `use-surface-query`, `use-locate-nodes`, `use-generate-at-mutation` |
-| Design space — types | `src/features/design-space/types.ts` | Hand-written `/api/projection/*` types (fold into `openapi.ts` on regen) |
+| Design space — surface | `src/components/design-space/design-space-surface.tsx` | SVG lattice: corpus glyphs (inspectable), node dots (confidence-dashed), candidate stars, collision badges + chooser, zoom-faded density heat, trustworthiness legend, cancel button |
+| Design space — candidates | `src/components/design-space/candidate-panel.tsx`, `compare-candidates-dialog.tsx` | Compose one option per aspect; precedents for the composition; compare; export |
+| Design space — hooks | `src/features/design-space/hooks/` | `use-surface-query` (gated on view), `use-locate-nodes`, `use-generate-at-mutation` (sends coords + AbortSignal), `use-corpus-project`, `use-candidate-precedents` |
+| Design space — utils/types | `src/features/design-space/candidate-utils.ts`, `types.ts` | Candidate text composition + hand-written projection payload types |
+| Export | `src/lib/export-exploration.ts` | Markdown exploration record (taxonomy + states, candidates, provenance) |
 
 ---
 
@@ -51,11 +54,12 @@ Next.js 16 frontend. React 19, Bun, TanStack Query, Zustand.
 5. `page.tsx` `useEffect` on `taxonomy` → `taxonomyToMindmapNodes(taxonomy)` → replaces `nodes` state and resets selection to root
 
 ### Design Space ⇄ Mind Map (two views, one selection)
-1. Top-center toggle switches `view` between `'map'` and `'space'` — both read the same `nodes` + `selection`.
-2. `useSurfaceQuery` loads the corpus background once (`GET /api/projection/surface`).
-3. On `nodes` change, missing nodes are embedded + placed via `POST /api/projection/locate` (best-effort; failures leave the background intact). Each node is attempted once per session.
-4. Clicking an **empty** lattice cell → `useGenerateAtMutation` (`POST /api/projection/generate-at`) → new children inserted into the tree (shared `insertChildrenAtNode`) with coords merged from the response — appears in both views.
-5. Clicking a **node** dot updates `selection` (same handler as the mind map), so toggling back preserves the active node. See [`../DESIGN-SPACE-VIZ.md`](../DESIGN-SPACE-VIZ.md) and [`../DESIGN-SPACE-TESTING.md`](../DESIGN-SPACE-TESTING.md).
+1. Top-center toggle switches `view` between `'map'` and `'space'` — both read the same `nodes` + `selection` (selection carries `nodeId` for exact identity).
+2. `useSurfaceQuery` loads the corpus background on first visit to the space view (`GET /api/projection/surface`; cached forever). The legend shows the layout's **trustworthiness**.
+3. On `nodes` change, missing nodes are embedded + placed via `POST /api/projection/locate` (best-effort). Each located point carries a **placement confidence** (dashed dot when low). Coords persist in the store; renames drop the stale coord so the node re-locates.
+4. Clicking an **empty** lattice cell → `useGenerateAtMutation` (`POST /api/projection/generate-at`, async job, cancellable). The backend brackets the gap with seed projects, derives the **parent aspect from the click**, and returns options **with descriptions, coordinates, and drift**. Seeds/target are recorded as per-node **provenance** (chips in the Context panel).
+5. Clicking a **corpus diamond** opens that real project in the Related Projects panel. Clicking a **node** dot updates `selection`; co-located nodes get a count badge + chooser popover.
+6. **Candidates**: choose one option per aspect (Context panel button) → the composition is embedded and drawn as a **star**, with its closest real precedents in the Candidate panel; compare and export from there. See [`../DESIGN-SPACE-VIZ.md`](../DESIGN-SPACE-VIZ.md), [`../DESIGN-SPACE-ITERATION-PLAN.md`](../DESIGN-SPACE-ITERATION-PLAN.md), and [`../DESIGN-SPACE-TESTING.md`](../DESIGN-SPACE-TESTING.md).
 
 ### Placeholder filter
 The backend returns `{ Name: "Relevant projects will appear here" }` when Supabase has no matches. The page filters this out before passing `relatedProjects` to the generate-nodes call.
@@ -121,8 +125,15 @@ src/
 
 ## Regenerate OpenAPI Types
 
-Run whenever backend request/response models change:
+Run whenever backend request/response models change (backend must be running):
 ```bash
 cd llmind-web
-bunx openapi-typescript http://localhost:8000/openapi.json -o src/types/openapi.ts
+npx -y openapi-typescript http://localhost:8000/openapi.json -o src/types/openapi.ts
 ```
+
+`openapi.ts` is rewritten wholesale — that is safe because app code imports from
+`src/types/api-aliases.ts`, which aliases the generated component schemas and
+hand-declares **async job result** shapes (generate-nodes / generate-at results
+travel through `GET /api/jobs/{id}`, which OpenAPI types as `unknown`). If a
+backend Pydantic model used by a job result changes, update `api-aliases.ts` by
+hand to match.

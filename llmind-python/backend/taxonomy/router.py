@@ -41,6 +41,36 @@ class AspectResponse(BaseModel):
 
 class GenerateTaxonomyResponse(BaseModel):
     aspects: list[AspectResponse] = Field(default_factory=list)
+    # Cosine similarity of the project overview to the corpus centroid (original
+    # embedding metric). Lets the UI warn when the design-space background (a
+    # media-architecture corpus) doesn't apply to this brief. None = unscored
+    # (embedding server unavailable) — never blocks generation.
+    corpus_similarity: float | None = None
+
+
+def _corpus_similarity(project_overview: str) -> float | None:
+    """Best-effort similarity of the brief to the corpus (None on any failure)."""
+    try:
+        import numpy as np
+
+        from backend.projection.service import _load_corpus_vectors
+        from config import settings
+        from utils.clients import build_vllm_client
+
+        ids, vecs = _load_corpus_vectors()
+        if not ids:
+            return None
+        client = build_vllm_client(settings.vllm_base_url)
+        response = client.embeddings.create(
+            model=settings.vllm_embed_model, input=[project_overview]
+        )
+        query = np.asarray(response.data[0].embedding, dtype=float)
+        norm = float(np.linalg.norm(query)) or 1.0
+        centroid = vecs.mean(axis=0)
+        centroid_norm = float(np.linalg.norm(centroid)) or 1.0
+        return float((query / norm) @ (centroid / centroid_norm))
+    except Exception:  # noqa: BLE001 — advisory metric only
+        return None
 
 
 @router.post(
@@ -69,7 +99,10 @@ def generate_taxonomy(payload: GenerateTaxonomyRequest) -> GenerateTaxonomyRespo
             )
             for aspect in result.get("aspects", [])
         ]
-        return GenerateTaxonomyResponse(aspects=aspects)
+        return GenerateTaxonomyResponse(
+            aspects=aspects,
+            corpus_similarity=_corpus_similarity(payload.project_overview),
+        )
     except TaxonomyServiceError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
