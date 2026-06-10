@@ -5,12 +5,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MindmapNode, MindmapSelection } from '@/src/features/mindmap/types';
 import type { CoordMap, GenerationTrail, Surface } from '@/src/features/design-space/types';
 import { nodeColor } from '@/src/lib/node-colors';
+import { ZOOM_FACTOR, ZOOM_MAX, ZOOM_MIN } from '@/src/lib/view-interactions';
 
 export type { GenerationTrail } from '@/src/features/design-space/types';
 
 const VIEW = 1000; // SVG coordinate space (square)
-const MIN_ZOOM = 0.5;
-const MAX_ZOOM = 8;
 const DRAG_THRESHOLD = 4; // px of movement before a press counts as a pan
 const DISCOVERED_COLOR = '#0ea5e9'; // sky — "already discovered" ring + trace lines
 const CORPUS_COLOR = 'rgba(244,140,43,0.9)'; // amber — real corpus projects
@@ -236,8 +235,8 @@ export function DesignSpaceSurface({
       const wx = e.clientX - rect.left;
       const wy = e.clientY - rect.top;
       setView((v) => {
-        const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-        const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.k * factor));
+        const factor = e.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
+        const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v.k * factor));
         const ratio = k / v.k;
         return { k, tx: wx - (wx - v.tx) * ratio, ty: wy - (wy - v.ty) * ratio };
       });

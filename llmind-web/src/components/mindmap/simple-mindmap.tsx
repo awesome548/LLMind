@@ -6,10 +6,11 @@ import MindElixir, {
   type NodeObj,
 } from 'mind-elixir';
 import 'mind-elixir/style.css';
-import { Loader2 } from 'lucide-react';
+import { Loader2, RotateCcw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MindmapNode, MindmapSelection } from '../../features/mindmap/types';
 import { nodeColor, nodeTextColor } from '../../lib/node-colors';
+import { ZOOM_FACTOR, ZOOM_MAX, ZOOM_MIN } from '../../lib/view-interactions';
 
 interface SimpleMindMapProps {
   nodes: ReadonlyArray<MindmapNode>;
@@ -147,6 +148,20 @@ export function SimpleMindMap({
       toolBar: false,
       keypress: true,
       allowUndo: true,
+      // ── Unified interactions (must match the design-space surface) ─────────
+      // Left-drag pans (selection box moves to right-drag), plain wheel zooms
+      // toward the cursor with the same factor and limits as the surface view.
+      mouseSelectionButton: 2,
+      scaleMin: ZOOM_MIN,
+      scaleMax: ZOOM_MAX,
+      handleWheel: (e: WheelEvent) => {
+        e.preventDefault();
+        const instance = mindRef.current;
+        if (!instance) return;
+        const factor = e.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
+        const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, instance.scaleVal * factor));
+        instance.scale(next, { x: e.clientX, y: e.clientY });
+      },
     });
 
     mind.init(model.data);
@@ -242,13 +257,30 @@ export function SimpleMindMap({
     };
   }, [generatingNodeId, model.topicToId]);
 
+  const resetView = () => {
+    const mind = mindRef.current;
+    if (!mind) return;
+    mind.scale(1);
+    mind.toCenter();
+  };
+
   return (
-    <div className="flex h-full min-h-[520px] flex-col overflow-hidden bg-background">
+    <div className="relative flex h-full min-h-[520px] flex-col overflow-hidden bg-background">
       <div
         ref={containerRef}
         className="min-h-0 flex-1 bg-background"
         aria-label="Mind map visualization"
       />
+      {/* Same control, same spot as the design-space view. */}
+      <button
+        type="button"
+        onClick={resetView}
+        className="absolute bottom-24 left-4 z-30 flex items-center gap-1.5 rounded-lg border bg-background/90 px-2.5 py-1.5 text-[10px] font-semibold text-muted-foreground shadow-sm backdrop-blur transition-colors hover:text-foreground"
+        title="Reset view (scroll to zoom, drag to pan)"
+      >
+        <RotateCcw className="h-3 w-3" />
+        Reset view
+      </button>
       {genPos && (
         <div
           className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-1/2"
