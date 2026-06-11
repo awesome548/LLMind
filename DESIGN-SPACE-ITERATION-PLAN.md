@@ -310,6 +310,76 @@ Reviewed after A–D landed (2026-06-10), with the live stack running.
 
 ---
 
+## Part 8 — Critical review after Iteration F (2026-06-11)
+
+State at review: A–D + F shipped (lens is now an on/off overlay with a selection/candidate
+anchor switcher; candidates fill via "— pick" click-flow in any view; Perspectives view
+read-only). E1–E8 and F2.1 remain open. This review asks: where is the project actually
+weak now, and what should happen next?
+
+### W1 — Feature accretion is outpacing the workflow (the new top weakness)
+The tool now offers 3 views, a lens with 2 anchor sources, 3 ways to fill a candidate
+slot, 2 generation paths, and 4 evidence panels. Each is individually justified; together
+they have no *spine* — nothing tells a designer what to do first or why. The
+similarity/relevance overlap complaint that triggered this iteration was a symptom:
+features are accreting faster than the conceptual model is being communicated.
+**Way forward:** (a) progressive disclosure — hide Candidate/lens/Perspectives until a
+taxonomy exists, hide Compare until 2 candidates; (b) a first-run guided sequence
+(generate → explore → reject/choose → compose → compare → export); (c) instrument
+feature usage (simple counters in the store) so the next decision about what to cut or
+promote is based on what designers actually touch.
+
+### W2 — The evaluation gap is now the project's deepest weakness
+The instrumentation exists (drift JSONL with `prompt_version` × `seed_strategy`; honest
+fidelity metrics on screen) but nothing analyses it (E6 unbuilt) and no user has been
+observed. For a research project, both halves of the contribution are currently
+unmeasured: the *technical* claim (bracket seeding + spatial prompt reduce drift) sits
+unverified in `generate_log.jsonl`, and the *design* claim (perspectives broaden
+exploration) has no behavioural metric. **Way forward:** E6 (log-stats CLI) is an
+afternoon; E5 (exploration stats) doubles as the study instrument — cells explored,
+aspects covered, candidate diversity (pairwise distance) are all computable from the
+store. Then a small within-subjects pilot (map-only vs +space vs full) closes the loop.
+E5/E6 should be re-ranked from "polish" to **research-critical**.
+
+### W3 — The corpus ceiling
+Everything (UMAP, lens, axes, precedents, seeds) sits on 209 scraped projects in one
+domain with one 768-d local model. Sparsity overdetermines "gaps"; scraped text quality
+varies; and single-corpus means the approach's generality is untested. **Way forward:** a
+second corpus in a different design domain as a generality probe (the pipeline —
+`build_local_index` + `project` fit — already supports it); treat per-corpus artifacts as
+a first-class concept then (directory per corpus, corpus picker).
+
+### W4 — F introduced its own debts (self-critique)
+- **Lens normalization is per-query**: the same red means different absolute cosine for
+  different anchors. The legend says "relative", but cross-anchor comparison is the
+  natural use. Consider an absolute-scale option (fixed cos 0.3–0.8 domain) or a tiny
+  histogram beside the ramp.
+- **Axes default poles are arbitrary** (first vs last option). The endpoint could return
+  the *most-distant pair* as a suggested default (it has the embeddings in hand).
+- **Honest edges (E2) is now inconsistent**: clip-dashing exists in the axes view but
+  boundary-pinned dots in the UMAP space still read as positions.
+- The pick flow can select a **rejected** option into a candidate (E3's conflict, third
+  path now).
+
+### W5 — Sustainability before a study
+`page.tsx` ~1,100 lines; 12+ persisted store slices with zero tests (E7); LEARN.md badly
+stale for its designer audience (E8); in-memory single-process jobs block any multi-user
+deployment; no exploration import (markdown export only) — a study needs full state
+save/load (JSON) for capture and crash recovery.
+
+### Recommended order
+1. **E6 + E5** — measurement first; run the bracket-vs-anchor / prompt-v1-vs-v2 analysis
+   that the log already contains.
+2. **E1 gap preview** — still the right interaction fix; design it once and let F2.1
+   (generate-in-axes) inherit the same preview pattern later.
+3. **Small integrity batch: E2 (surface edges), E3 (choose/reject invariant incl. the
+   pick flow), E4 (state GC).**
+4. **Session save/load JSON + usage counters** — study enablement.
+5. **E7 refactor + store tests, E8 docs** — before the codebase calcifies.
+6. **Pilot study** (3–5 designers, within-subjects, E5 metrics as DVs).
+
+---
+
 ## Part 7 — Beyond one static 2D view: perspectives & dimensionality
 
 **The question:** the space is one frozen 2D projection. Would 3D, or multiple

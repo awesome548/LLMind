@@ -53,11 +53,11 @@ def _corpus_similarity(project_overview: str) -> float | None:
     try:
         import numpy as np
 
-        from backend.projection.service import _load_corpus_vectors
+        from backend.corpus.service import load_corpus_vectors
         from config import settings
         from utils.clients import build_vllm_client
 
-        ids, vecs = _load_corpus_vectors()
+        ids, vecs = load_corpus_vectors()
         if not ids:
             return None
         client = build_vllm_client(settings.vllm_base_url)

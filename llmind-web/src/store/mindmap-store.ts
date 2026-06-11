@@ -6,6 +6,7 @@ import {
   taxonomyToMindmapNodes,
 } from '../features/mindmap/data/schema-mindmap-data';
 import type {
+  AxesConfig,
   DesignCandidate,
   MindmapNode,
   NodeProvenance,
@@ -74,6 +75,8 @@ interface MindmapStoreState {
   activeCandidateId: string | null;
   /** node.id → pruning state (rejected + reason). */
   optionState: Record<string, OptionStateEntry>;
+  /** Perspectives view: the chosen axis poles (null until first configured). */
+  axesConfig: AxesConfig | null;
   setJmRef: (ref: unknown | null) => void;
   selectTopic: (input: MindmapSelectionInput) => void;
   setContext: (context: { contextText: string; contextDescription: string }) => void;
@@ -99,6 +102,7 @@ interface MindmapStoreState {
   setChoice: (aspectId: string, optionId: string | null) => void;
   rejectOption: (nodeId: string, reason?: string) => void;
   reopenOption: (nodeId: string) => void;
+  setAxesConfig: (config: AxesConfig | null) => void;
   setMindmapData: (payload: {
     contextText?: string;
     contextDescription?: string;
@@ -124,6 +128,7 @@ const createInitialState = () => ({
   candidates: {} as Record<string, DesignCandidate>,
   activeCandidateId: null as string | null,
   optionState: {} as Record<string, OptionStateEntry>,
+  axesConfig: null as AxesConfig | null,
 });
 
 type PersistedState = ReturnType<typeof createInitialState>;
@@ -164,6 +169,7 @@ export const useMindmapStore = create<MindmapStoreState>()(
             candidates: {},
             activeCandidateId: null,
             optionState: {},
+            axesConfig: null,
           })),
         setNodes: (nodes) => set(() => ({ nodes })),
         mergeCoords: (coords) =>
@@ -249,6 +255,7 @@ export const useMindmapStore = create<MindmapStoreState>()(
             delete next[nodeId];
             return { optionState: next };
           }),
+        setAxesConfig: (config) => set(() => ({ axesConfig: config })),
         setMindmapData: (payload) =>
           set((state) => ({
             contextText: payload.contextText ?? state.contextText,
@@ -299,6 +306,7 @@ export const useMindmapStore = create<MindmapStoreState>()(
           candidates: state.candidates,
           activeCandidateId: state.activeCandidateId,
           optionState: state.optionState,
+          axesConfig: state.axesConfig,
         }),
       }
     ),

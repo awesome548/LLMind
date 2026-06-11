@@ -1,16 +1,17 @@
 'use client';
 
 import { RotateCcw } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { MindmapNode, MindmapSelection } from '@/src/features/mindmap/types';
 import type { CoordMap, GenerationTrail, Surface } from '@/src/features/design-space/types';
+import type { RelevanceMap } from '@/src/features/design-space/hooks/use-relevance-query';
+import { usePanZoom } from '@/src/features/design-space/hooks/use-pan-zoom';
 import { nodeColor } from '@/src/lib/node-colors';
-import { ZOOM_FACTOR, ZOOM_MAX, ZOOM_MIN } from '@/src/lib/view-interactions';
+import { starPath } from '@/src/lib/svg-glyphs';
 
 export type { GenerationTrail } from '@/src/features/design-space/types';
 
 const VIEW = 1000; // SVG coordinate space (square)
-const DRAG_THRESHOLD = 4; // px of movement before a press counts as a pan
 const DISCOVERED_COLOR = '#0ea5e9'; // sky — "already discovered" ring + trace lines
 const CORPUS_COLOR = 'rgba(244,140,43,0.9)'; // amber — real corpus projects
 // Placement confidence below this renders dashed ("approximate"). Calibrated
@@ -21,16 +22,14 @@ const CANDIDATE_COLOR = '#7c3aed'; // violet — composed design candidates
 const EMPTY_DISCOVERED: Record<string, GenerationTrail> = {};
 const EMPTY_REJECTED: ReadonlySet<string> = new Set();
 
-/** 5-point star path centred on (cx, cy) with outer radius r. */
-function starPath(cx: number, cy: number, r: number): string {
-  const inner = r * 0.45;
-  const points: string[] = [];
-  for (let i = 0; i < 10; i++) {
-    const radius = i % 2 === 0 ? r : inner;
-    const angle = -Math.PI / 2 + (i * Math.PI) / 5;
-    points.push(`${cx + radius * Math.cos(angle)},${cy + radius * Math.sin(angle)}`);
-  }
-  return `M${points.join('L')}Z`;
+/** Relevance-lens ramp: cool-to-warm heatmap (blue → green → yellow → red).
+ * The cold/hot reading is immediate, and low-relevance dots stay visually
+ * quiet (cool, mid-light) on the light background. */
+export function relevanceColor(t: number): string {
+  const hue = 240 - 230 * t;
+  const sat = 70 + 20 * t;
+  const light = 60 - 12 * t;
+  return `hsl(${hue} ${sat}% ${light}%)`;
 }
 
 export interface CandidateMarker {
@@ -51,12 +50,6 @@ interface PlacedNode {
   gx: number;
   gy: number;
   confidence: number | null;
-}
-
-interface ViewTransform {
-  k: number;
-  tx: number;
-  ty: number;
 }
 
 interface Props {
@@ -86,8 +79,15 @@ interface Props {
   /** Stop waiting on the running generation (shown while isGenerating). */
   onCancelGenerate?: () => void;
   /** Corpus ids of the selected node's related projects — highlighted so the
-   * panel's examples are also visible as places on the map. */
+   * panel's examples are also visible as places on the map. (Similarity mode.) */
   relatedProjects?: ReadonlySet<string>;
+  /** Relevance-lens painting: when set, corpus glyphs recolor by normalized
+   * true-cosine relevance to the anchor, and non-anchor nodes fade. */
+  relevance?: RelevanceMap | null;
+  /** Node id (or `cand:` key) of the lens anchor — keeps full opacity. */
+  lensAnchorId?: string | null;
+  /** Anchor label for the lens legend. */
+  lensAnchorLabel?: string | null;
 }
 
 /** Walk the tree → flat placed nodes (depth, branch index/topic, snapped cell). */
@@ -151,26 +151,31 @@ export function DesignSpaceSurface({
   rejected,
   onCancelGenerate,
   relatedProjects,
+  relevance = null,
+  lensAnchorId = null,
+  lensAnchorLabel = null,
 }: Props) {
   const discoveredCells = discovered ?? EMPTY_DISCOVERED;
   const rejectedIds = rejected ?? EMPTY_REJECTED;
+  const lensActive = Boolean(relevance);
   const R = surface.grid.resolution;
   const cell = VIEW / R;
-  const containerRef = useRef<HTMLDivElement>(null);
 
   const [hover, setHover] = useState<{ gx: number; gy: number } | null>(null);
   const [tip, setTip] = useState<{ x: number; y: number; label: string; sub?: string } | null>(null);
-  const [view, setView] = useState<ViewTransform>({ k: 1, tx: 0, ty: 0 });
   // Disambiguation popover for cells where several nodes snapped to one spot.
   const [chooser, setChooser] = useState<{ x: number; y: number; nodes: PlacedNode[] } | null>(
     null
   );
 
-  // `moved` lets us swallow the click that ends a drag (so a pan doesn't also
-  // select/generate). We intentionally do NOT use setPointerCapture: capturing
-  // the pointer on the container redirects pointerup/click away from the dots,
-  // which would break clicking a dot to select it.
-  const movedRef = useRef(false);
+  // Unified canvas interactions (shared with the axes view; mirrored by the
+  // mind map). Tooltips and the viewport-fixed chooser dismiss on pan.
+  const { containerRef, view, movedRef, onPointerDown, onClickCapture, resetView } = usePanZoom(
+    () => {
+      setTip(null);
+      setChooser(null);
+    }
+  );
 
   const { placed, lineageOf } = useMemo(() => placeNodes(nodes, coords, R), [nodes, coords, R]);
 
@@ -224,68 +229,10 @@ export function DesignSpaceSurface({
   const px = useCallback((x: number) => x * VIEW, []);
   const py = useCallback((y: number) => VIEW - y * VIEW, []);
 
-  // ── Zoom (wheel, toward cursor) — native non-passive listener so we can
-  //    preventDefault and stop the page from scrolling. ───────────────────────
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      const wx = e.clientX - rect.left;
-      const wy = e.clientY - rect.top;
-      setView((v) => {
-        const factor = e.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
-        const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v.k * factor));
-        const ratio = k / v.k;
-        return { k, tx: wx - (wx - v.tx) * ratio, ty: wy - (wy - v.ty) * ratio };
-      });
-    };
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
-  }, []);
-
-  // ── Pan (pointer drag via window listeners — no pointer capture) ────────────
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const baseTx = view.tx;
-    const baseTy = view.ty;
-    movedRef.current = false;
-
-    const onMove = (ev: PointerEvent) => {
-      const dx = ev.clientX - startX;
-      const dy = ev.clientY - startY;
-      if (!movedRef.current && Math.hypot(dx, dy) > DRAG_THRESHOLD) movedRef.current = true;
-      if (movedRef.current) {
-        setTip(null);
-        setChooser(null); // the popover is viewport-fixed; it can't follow a pan
-        setView((v) => ({ ...v, tx: baseTx + dx, ty: baseTy + dy }));
-      }
-    };
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  };
-
-  // Swallow the click that terminates a drag so a pan doesn't also select/generate.
-  const onClickCapture = (e: React.MouseEvent) => {
-    if (movedRef.current) {
-      e.stopPropagation();
-      e.preventDefault();
-      movedRef.current = false;
-    }
-  };
-
-  const resetView = () => setView({ k: 1, tx: 0, ty: 0 });
-
   // Aggregate density heat is redundant while individual corpus glyphs are
   // legible; it fades in as you zoom OUT and the glyphs shrink (overview mode).
-  const heatOpacity = Math.max(0, Math.min(1, (1 - view.k) / 0.4));
+  // The lens replaces the corpus painting entirely, so the heat hides with it.
+  const heatOpacity = lensActive ? 0 : Math.max(0, Math.min(1, (1 - view.k) / 0.4));
 
   // ── Density heat layer (non-interactive; visibility driven by zoom) ────────
   const heatDots = useMemo(() => {
@@ -386,13 +333,39 @@ export function DesignSpaceSurface({
   );
 
   // ── Corpus glyphs (real projects, inspectable) ──────────────────────────────
+  // Heat splats for the lens: one soft circle per corpus point, sized and
+  // colored by relevance. Only the warm half glows — broad anchors score
+  // mid-high everywhere, and glowing everything turns the field into a wash
+  // that buries the glyphs.
+  const lensGlow = useMemo(() => {
+    if (!relevance) return null;
+    return surface.points.map((p) => {
+      const t = relevance.byId[p.id] ?? 0;
+      if (t < 0.45) return null;
+      const heat = (t - 0.45) / 0.55;
+      return (
+        <circle
+          key={`lg-${p.id}`}
+          cx={px(p.x)}
+          cy={py(p.y)}
+          r={cell * (0.7 + 1.9 * heat)}
+          fill={relevanceColor(t)}
+          opacity={0.15 + 0.75 * heat}
+        />
+      );
+    });
+  }, [relevance, surface.points, cell, px, py]);
+
   const corpusGlyphs = useMemo(() => {
     const glows: React.ReactNode[] = [];
     const glyphs = surface.points.map((p) => {
       const gx = px(p.x);
       const gy = py(p.y);
-      const isRelated = relatedProjects?.has(p.id) ?? false;
-      const s = cell * (isRelated ? 0.34 : 0.24);
+      // Lens mode: continuous relevance painting replaces the binary
+      // related-projects highlight (which stays a Similarity-mode affordance).
+      const t = relevance ? relevance.byId[p.id] ?? 0 : null;
+      const isRelated = !relevance && (relatedProjects?.has(p.id) ?? false);
+      const s = t != null ? cell * (0.16 + 0.22 * t) : cell * (isRelated ? 0.34 : 0.24);
       if (isRelated) {
         // Soft halo beneath the glyph so the panel's examples pop on the map.
         glows.push(
@@ -414,7 +387,7 @@ export function DesignSpaceSurface({
           width={s * 2}
           height={s * 2}
           transform={`rotate(45 ${gx} ${gy})`}
-          fill={CORPUS_COLOR}
+          fill={t != null ? relevanceColor(t) : CORPUS_COLOR}
           stroke={isRelated ? '#0f172a' : 'white'}
           strokeWidth={isRelated ? 1.8 : 0.8}
           className="cursor-pointer hover:brightness-110"
@@ -424,9 +397,12 @@ export function DesignSpaceSurface({
               x: rect.left + rect.width / 2,
               y: rect.top,
               label: p.name || 'Corpus project',
-              sub: isRelated
-                ? 'Related to your selection — click to view'
-                : 'Real project — click to view',
+              sub:
+                t != null
+                  ? `Relevance ${(t * 100).toFixed(0)}% (relative) — click to view`
+                  : isRelated
+                    ? 'Related to your selection — click to view'
+                    : 'Real project — click to view',
             });
           }}
           onMouseLeave={() => setTip(null)}
@@ -451,7 +427,7 @@ export function DesignSpaceSurface({
         {glyphs}
       </>
     );
-  }, [surface.points, cell, px, py, onSelectProject, relatedProjects]);
+  }, [surface.points, cell, px, py, onSelectProject, relatedProjects, relevance]);
 
   // ── Spinner ring around the cell being generated ─────────────────────────
   const spinner = useMemo(() => {
@@ -519,6 +495,22 @@ export function DesignSpaceSurface({
           <g opacity={heatOpacity} pointerEvents="none">
             {heatDots}
           </g>
+        )}
+        {/* Lens heat-glow: blurred splats AT the real projects (kernel radius is
+            small on purpose — a continuous interpolated plane would assert
+            relevance values for empty regions, where the projection is least
+            trustworthy; this stays anchored to actual corpus points). */}
+        {relevance && (
+          <>
+            <defs>
+              <filter id="ds-lens-blur" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation={cell * 1.2} />
+              </filter>
+            </defs>
+            <g filter="url(#ds-lens-blur)" opacity={0.35} pointerEvents="none">
+              {lensGlow}
+            </g>
+          </>
         )}
         {baseDots}
         {cellHighlights}
@@ -619,7 +611,15 @@ export function DesignSpaceSurface({
                 cy={cy(p.gy)}
                 r={r}
                 fill={color}
-                opacity={isRejected ? 0.15 : inSelected ? 1 : 0.25}
+                opacity={
+                  lensActive && p.id !== lensAnchorId
+                    ? 0.12 // the lens is about the corpus; non-anchor ideas recede
+                    : isRejected
+                      ? 0.15
+                      : inSelected
+                        ? 1
+                        : 0.25
+                }
                 stroke={isExact ? '#0f172a' : isMatch ? '#475569' : 'white'}
                 strokeWidth={isExact ? 2.5 : isMatch ? 2 : 1.5}
                 strokeDasharray={lowConfidence ? '4 3' : undefined}
@@ -709,7 +709,15 @@ export function DesignSpaceSurface({
               key={`cand-${c.id}`}
               d={starPath(sx, sy, r)}
               fill={CANDIDATE_COLOR}
-              opacity={c.active ? 1 : 0.55}
+              opacity={
+                lensActive
+                  ? `cand:${c.id}` === lensAnchorId
+                    ? 1
+                    : 0.12
+                  : c.active
+                    ? 1
+                    : 0.55
+              }
               stroke="white"
               strokeWidth={1.5}
               className="cursor-pointer hover:brightness-110"
@@ -807,6 +815,24 @@ export function DesignSpaceSurface({
           </button>
         )}
         <div className="flex flex-col gap-1 rounded-lg border bg-background/80 px-3 py-2 text-[10px] text-muted-foreground shadow-sm backdrop-blur">
+          {lensActive && (
+            <div className="flex flex-col gap-0.5 border-b pb-1">
+              <span
+                className="h-2 w-full rounded-sm"
+                style={{
+                  background: `linear-gradient(to right, ${relevanceColor(0)}, ${relevanceColor(0.5)}, ${relevanceColor(1)})`,
+                }}
+              />
+              <span>
+                relevance to <span className="font-semibold">{lensAnchorLabel ?? 'selection'}</span>
+              </span>
+              {relevance && (
+                <span title="Min-max normalized per query — the painting shows RELATIVE relevance">
+                  relative (cos {relevance.min.toFixed(2)}–{relevance.max.toFixed(2)})
+                </span>
+              )}
+            </div>
+          )}
           <div className="flex items-center gap-1.5">
             <span
               className="inline-block h-2.5 w-2.5 rotate-45"

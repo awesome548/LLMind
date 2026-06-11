@@ -86,6 +86,36 @@ export type CoordMap = Record<
   { x: number; y: number; z?: number; confidence?: number | null }
 >;
 
+// ── Semantic-axes perspective (/api/projection/axes) ──────────────────────────
+
+export interface AxesPoint {
+  id: string;
+  x: number;
+  y: number;
+}
+
+export interface AxesItemPoint {
+  node_id: string;
+  x: number;
+  y: number;
+  /** Raw score fell outside the corpus range (rendered as an edge marker). */
+  clipped: boolean;
+}
+
+export interface AxesMeta {
+  /** cos(pole_a, pole_b) per axis — near 1.0 means the axis collapses. */
+  x_pole_sim: number;
+  y_pole_sim: number;
+  /** Pearson r of corpus x vs y scores — near ±1 means redundant axes. */
+  axis_corr: number;
+}
+
+export interface AxesResponse {
+  corpus: AxesPoint[];
+  items: AxesItemPoint[];
+  meta: AxesMeta;
+}
+
 /** A connector drawn from a generation's clicked cell to the nodes it produced. */
 export interface GenerationTrail {
   from: { x: number; y: number };

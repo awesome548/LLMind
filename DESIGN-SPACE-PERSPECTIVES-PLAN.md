@@ -1,6 +1,11 @@
 # Iteration F — Perspectives: Relevance Lens + Semantic Axes
 
-**Status:** Plan for review — NOT implemented. Awaiting approval/decisions on the open questions.
+**Status:** ✅ Implemented and verified (2026-06-11) with the recommended choices for
+Q1–Q4 (lens is paint-only; axes view shows only the chosen aspects' options; F2 shipped
+read-only; the binary related-highlight remains in Similarity mode). Generation-in-axes
+(F2.1) remains open. Endpoints: `POST /api/corpus/relevance`, `POST /api/projection/axes`.
+Frontend: `spaceMode` toggle in the Design Space view; third "Perspectives" navigator view
+(`axes-view.tsx`); shared `usePanZoom` hook now backs both canvases.
 **Prerequisite (done in this pass):** unified view interactions — both the mind map and the
 design space now share the same grammar (plain wheel = zoom toward cursor, factor 1.12,
 range 0.5–8; left-drag = pan; click = select; a "Reset view" button in both). Constants live

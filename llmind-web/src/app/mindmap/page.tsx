@@ -2,6 +2,8 @@
 
 import {
   ChevronRight,
+  Compass,
+  Focus,
   Grid3x3,
   Home,
   Info,
@@ -23,6 +25,8 @@ import {
 } from '@/src/features/design-space/hooks/use-locate-nodes';
 import { useGenerateAtMutation } from '@/src/features/design-space/hooks/use-generate-at-mutation';
 import { useCorpusProjectQuery } from '@/src/features/design-space/hooks/use-corpus-project';
+import { useRelevanceQuery } from '@/src/features/design-space/hooks/use-relevance-query';
+import { AxesView } from '@/src/components/design-space/axes-view';
 import { CandidatePanel } from '@/src/components/design-space/candidate-panel';
 import { CompareCandidatesDialog } from '@/src/components/design-space/compare-candidates-dialog';
 import {
@@ -234,7 +238,16 @@ export default function MindmapPage() {
   );
 
   // ── Design-space view ──────────────────────────────────────────────────────
-  const [view, setView] = useState<'map' | 'space'>('map');
+  const [view, setView] = useState<'map' | 'space' | 'axes'>('map');
+  // Relevance lens: an on/off overlay on the design space (not a separate
+  // mode — same view, same interactions, extra paint). Anchor is switchable
+  // between the selected node and the active candidate.
+  const [lensOn, setLensOn] = useState(false);
+  const [lensSource, setLensSource] = useState<'selection' | 'candidate'>('selection');
+  // Candidate "pick" flow: clicking an empty aspect slot ("—") in the panel
+  // arms this; the next click on an option of that aspect (in ANY view)
+  // fills the slot.
+  const [pendingChoiceAspectId, setPendingChoiceAspectId] = useState<string | null>(null);
   const [pendingCell, setPendingCell] = useState<[number, number] | null>(null);
   // The currently-traced connector (transient; the discovered set persists).
   const [activeLine, setActiveLine] = useState<GenerationTrail | null>(null);
@@ -264,6 +277,7 @@ export default function MindmapPage() {
     setTaxonomy(result);
     setSelection({ topic: INITIAL_SELECTION.topic, lineage: [...INITIAL_SELECTION.lineage] });
     setActiveLine(null);
+    setPendingChoiceAspectId(null);
     attemptedRef.current.clear();
     const similarity = result.corpus_similarity;
     setCorpusNotice(
@@ -409,6 +423,42 @@ export default function MindmapPage() {
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
 
+  // ── Relevance lens: an overlay on the design space, anchored to either the
+  //    selected node or the active candidate (explicitly switchable) ───────────
+  const selectionAnchor = useMemo(() => {
+    if (!selectedNode) return null;
+    const desc =
+      descriptionById[selectedNode.id] ?? activeDescriptionByTopic[selectedNode.topic] ?? '';
+    return {
+      id: selectedNode.id,
+      label: selectedNode.topic,
+      text: desc ? `${selectedNode.topic}. ${desc}` : selectedNode.topic,
+    };
+  }, [selectedNode, descriptionById, activeDescriptionByTopic]);
+
+  const candidateAnchor = useMemo(() => {
+    if (!activeCandidate) return null;
+    const text = composeCandidateText(
+      activeCandidate,
+      nodes,
+      activeDescriptionByTopic,
+      descriptionById
+    );
+    return text
+      ? { id: candidateCoordKey(activeCandidate.id), label: activeCandidate.name, text }
+      : null;
+  }, [activeCandidate, nodes, activeDescriptionByTopic, descriptionById]);
+
+  const lensAnchor =
+    lensSource === 'candidate'
+      ? candidateAnchor ?? selectionAnchor
+      : selectionAnchor ?? candidateAnchor;
+
+  const lensActive = view === 'space' && lensOn && Boolean(lensAnchor);
+  const { data: relevance, error: relevanceError } = useRelevanceQuery(
+    lensActive ? lensAnchor?.text ?? null : null
+  );
+
   const handleChooseOption = () => {
     if (!selectedNode || !selectedAspect) return;
     if (!activeCandidateId || !candidates[activeCandidateId]) createCandidate();
@@ -424,6 +474,18 @@ export default function MindmapPage() {
   }, [selection, description, selectTopic]);
 
   const handleSelect = (nextSelection: MindmapSelection) => {
+    // Armed pick flow: if the click landed on an option of the awaited aspect
+    // (works from the mind map AND the design space — both route here), fill
+    // the candidate's slot and disarm.
+    if (pendingChoiceAspectId && nextSelection.lineage.length >= 3) {
+      const aspect = findNodeByLineage(nodes, nextSelection.lineage.slice(0, 2));
+      const optionId =
+        nextSelection.nodeId ?? findNodeByLineage(nodes, nextSelection.lineage)?.id;
+      if (aspect?.id === pendingChoiceAspectId && optionId) {
+        setChoice(pendingChoiceAspectId, optionId);
+        setPendingChoiceAspectId(null);
+      }
+    }
     setSelection({
       topic: nextSelection.topic,
       lineage: [...nextSelection.lineage],
@@ -655,12 +717,13 @@ export default function MindmapPage() {
 
   return (
     <main className="relative flex h-screen w-full flex-col overflow-hidden bg-background">
-      {/* Floating Navigator (Bottom) */}
-      <header className="absolute bottom-8 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-4xl -translate-x-1/2 grid-cols-3 items-center rounded-full border bg-background/80 px-4 py-2 shadow-xl backdrop-blur-md transition-all hover:bg-background/90">
+      {/* Floating Navigator (Bottom) — content-sized so the view toggles and the
+          generate buttons never wrap or overlap. */}
+      <header className="absolute bottom-8 left-1/2 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-4 rounded-full border bg-background/80 px-4 py-2 shadow-xl backdrop-blur-md transition-all hover:bg-background/90">
         <div className="flex items-center justify-start">
           <Link
             href="/"
-            className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-muted-foreground transition-all hover:bg-muted hover:text-foreground active:scale-95"
+            className="flex items-center gap-2 whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold text-muted-foreground transition-all hover:bg-muted hover:text-foreground active:scale-95"
           >
             <Home className="h-4 w-4" />
             Home
@@ -668,12 +731,12 @@ export default function MindmapPage() {
         </div>
 
         <div className="flex items-center justify-center">
-          <div className="flex items-center gap-0.5 rounded-full bg-muted/60 p-0.5">
+          <div className="flex shrink-0 items-center gap-0.5 rounded-full bg-muted/60 p-0.5">
             <button
               type="button"
               onClick={() => setView('map')}
               aria-pressed={view === 'map'}
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
+              className={`flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
                 view === 'map'
                   ? 'bg-background text-foreground shadow-sm'
                   : 'text-muted-foreground hover:text-foreground'
@@ -686,7 +749,7 @@ export default function MindmapPage() {
               type="button"
               onClick={() => setView('space')}
               aria-pressed={view === 'space'}
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
+              className={`flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
                 view === 'space'
                   ? 'bg-background text-foreground shadow-sm'
                   : 'text-muted-foreground hover:text-foreground'
@@ -694,6 +757,19 @@ export default function MindmapPage() {
             >
               <Grid3x3 className="h-3.5 w-3.5" />
               Design Space
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('axes')}
+              aria-pressed={view === 'axes'}
+              className={`flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
+                view === 'axes'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Compass className="h-3.5 w-3.5" />
+              Perspectives
             </button>
           </div>
         </div>
@@ -704,7 +780,7 @@ export default function MindmapPage() {
             variant="outline"
             size="sm"
             onClick={() => setTaxonomyDialogOpen(true)}
-            className="h-9 gap-2 rounded-full px-5 text-xs font-bold shadow-sm transition-all hover:bg-accent hover:text-accent-foreground active:scale-95"
+            className="h-9 gap-2 whitespace-nowrap rounded-full px-5 text-xs font-bold shadow-sm transition-all hover:bg-accent hover:text-accent-foreground active:scale-95"
           >
             <Sparkles className="h-4 w-4 text-primary" />
             Generate Taxonomy
@@ -714,7 +790,7 @@ export default function MindmapPage() {
             size="sm"
             onClick={() => setGenerateNodesDialogOpen(true)}
             disabled={isGeneratingNodes || isFetching}
-            className="h-9 gap-2 rounded-full px-5 text-xs font-bold shadow-sm transition-all active:scale-95"
+            className="h-9 gap-2 whitespace-nowrap rounded-full px-5 text-xs font-bold shadow-sm transition-all active:scale-95"
           >
             {isGeneratingNodes ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -885,13 +961,87 @@ export default function MindmapPage() {
             descriptionByTopic={activeDescriptionByTopic}
             onOpenProject={setFocusProjectId}
             onOpenCompare={() => setCompareOpen(true)}
+            pendingAspectId={pendingChoiceAspectId}
+            onStartPickChoice={setPendingChoiceAspectId}
+            onCancelPickChoice={() => setPendingChoiceAspectId(null)}
+            onInspectRelevance={() => {
+              setLensSource('candidate');
+              setLensOn(true);
+              setView('space');
+            }}
           />
         </div>
       </div>
 
-      {/* Main view layer — mind map and design space share nodes + selection */}
+      {/* Relevance lens: an overlay toggle on the design space (not a mode) */}
+      {view === 'space' && (
+        <div className="absolute top-4 left-1/2 z-40 flex -translate-x-1/2 flex-col items-center gap-1">
+          <div className="flex items-center gap-1 rounded-full border bg-background/90 p-0.5 shadow-md backdrop-blur">
+            <button
+              type="button"
+              onClick={() => setLensOn((v) => !v)}
+              aria-pressed={lensOn}
+              disabled={!lensOn && !lensAnchor}
+              title={
+                !lensAnchor
+                  ? 'Select a node or candidate to anchor the lens'
+                  : 'Color real projects by relevance to the anchor'
+              }
+              className={`flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+                lensOn && lensAnchor
+                  ? 'bg-muted text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Focus className="h-3 w-3" />
+              Relevance lens {lensOn && lensAnchor ? 'on' : 'off'}
+            </button>
+            {/* Anchor switcher — only when both anchors exist */}
+            {lensOn && selectionAnchor && candidateAnchor && (
+              <>
+                <span className="h-3.5 w-px bg-border" />
+                {(
+                  [
+                    ['selection', selectionAnchor.label],
+                    ['candidate', candidateAnchor.label],
+                  ] as const
+                ).map(([source, label]) => (
+                  <button
+                    key={source}
+                    type="button"
+                    onClick={() => setLensSource(source)}
+                    className={`max-w-[9rem] truncate whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-medium transition-colors ${
+                      lensSource === source
+                        ? 'bg-violet-500/10 text-violet-700'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                    title={`Anchor the lens to ${source === 'selection' ? 'the selected node' : 'the active candidate'}: ${label}`}
+                  >
+                    {source === 'selection' ? '◉' : '★'} {label}
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+          {lensActive && relevanceError ? (
+            <p className="rounded-md bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
+              {relevanceError instanceof Error ? relevanceError.message : 'Lens unavailable.'}
+            </p>
+          ) : null}
+        </div>
+      )}
+
+      {/* Main view layer — all views share nodes + selection */}
       <div className="relative h-full w-full">
-        {view === 'space' ? (
+        {view === 'axes' ? (
+          <AxesView
+            nodes={nodes}
+            selection={selection}
+            onSelectNode={handleSelect}
+            onSelectProject={setFocusProjectId}
+            descriptionByTopic={activeDescriptionByTopic}
+          />
+        ) : view === 'space' ? (
           surface ? (
             <DesignSpaceSurface
               surface={surface}
@@ -914,7 +1064,10 @@ export default function MindmapPage() {
               onSelectCandidate={setActiveCandidate}
               rejected={rejectedIds}
               onCancelGenerate={() => generateAbortRef.current?.abort()}
-              relatedProjects={relatedProjectIds}
+              relatedProjects={!lensActive ? relatedProjectIds : undefined}
+              relevance={lensActive ? relevance ?? null : null}
+              lensAnchorId={lensActive ? lensAnchor?.id ?? null : null}
+              lensAnchorLabel={lensActive ? lensAnchor?.label ?? null : null}
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center p-8 text-center">

@@ -117,6 +117,7 @@ at runtime. See [`../DESIGN-SPACE-VIZ.md`](../DESIGN-SPACE-VIZ.md) and
 | `GET /api/projection/surface` | Precomputed corpus background: grid spec, points, density; `meta.trustworthiness` reports layout fidelity | No |
 | `POST /api/projection/locate` | Embed node text → coords in the frozen space (`{items:[{node_id,text}]}`); each point carries `confidence` (true-vs-2D neighbourhood Jaccard, None = unscorable) | Yes (embed) |
 | `POST /api/projection/generate-at` | **Async.** Location-conditioned generation: clicked `(x,y)` + optional `coords` (located nodes) → seeds that **bracket** the gap, parent aspect **derived from the click**, options with `desc`, per-node `drift` + `mean_drift` | Yes (embed + LLM) |
+| `POST /api/projection/axes` | Semantic-axes perspective: `{x:{pole_a,pole_b}, y:{...}, items}` → exact bipolar cosine coords for corpus + items (clip-flagged), with diagnostics (`x/y_pole_sim`, `axis_corr`) | Yes (embed) |
 
 `generate-at` behaviour: seeds come from `seed_corpus` (`SEED_STRATEGY=bracket` default,
 `anchor` = legacy single-neighbourhood; switchable for A/B). Every call appends a JSONL
@@ -132,6 +133,7 @@ seeds, per-node drift) — the evaluation dataset for prompt/seeding variants.
 |---|---|---|
 | `GET /api/corpus/projects/{id}` | One corpus project's metadata (the inspectable design-space dots) | No |
 | `POST /api/corpus/similar` | `{text, k}` → closest corpus precedents by TRUE cosine similarity (used for candidate designs) | Yes |
+| `POST /api/corpus/relevance` | `{text}` → cosine score for EVERY corpus project + min/max (the relevance lens; client normalises → "relative relevance") | Yes |
 
 ### Taxonomy extras
 

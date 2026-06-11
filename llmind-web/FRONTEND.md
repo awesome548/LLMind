@@ -29,11 +29,13 @@ Next.js 16 frontend. React 19, Bun, TanStack Query, Zustand.
 | Components | `src/components/mindmap/` | `SimpleMindMap` (mind-elixir wrapper; `nodeStates` styles rejected/chosen), `SimpleProjectPanel` (accepts `focusProject`) |
 | Dialog | `src/features/mindmap/components/generate-taxonomy-dialog.tsx` | Taxonomy generation form (project overview, reasoning, mode) |
 | Data | `src/features/mindmap/data/schema-mindmap-data.ts` | Static initial taxonomy + `taxonomyToMindmapNodes()` converter |
-| Page | `src/app/mindmap/page.tsx` | Main orchestrator — wires store, hooks, components; Mind Map ⇄ Design Space toggle |
-| Design space — surface | `src/components/design-space/design-space-surface.tsx` | SVG lattice: corpus glyphs (inspectable), node dots (confidence-dashed), candidate stars, collision badges + chooser, zoom-faded density heat, trustworthiness legend, cancel button |
+| Page | `src/app/mindmap/page.tsx` | Main orchestrator — wires store, hooks, components; Mind Map / Design Space / Perspectives view toggle + Similarity/Relevance-lens mode toggle |
+| Design space — surface | `src/components/design-space/design-space-surface.tsx` | SVG lattice: corpus glyphs (inspectable), node dots (confidence-dashed), candidate stars, collision badges + chooser, zoom-faded density heat, trustworthiness legend, cancel button; **relevance-lens painting** (single-hue amber ramp, anchor-faded nodes, "relative" legend) |
+| Design space — axes view | `src/components/design-space/axes-view.tsx` | "Perspectives": bipolar scatter on designer-chosen aspect/option poles — exact cosine scores, quadrant density shading, rug ticks, pole labels, axis-quality warnings (pole similarity, axis correlation), clip-dashed items. Read-only v1 |
 | Design space — candidates | `src/components/design-space/candidate-panel.tsx`, `compare-candidates-dialog.tsx` | Compose one option per aspect; precedents for the composition; compare; export |
-| Design space — hooks | `src/features/design-space/hooks/` | `use-surface-query` (gated on view), `use-locate-nodes`, `use-generate-at-mutation` (sends coords + AbortSignal), `use-corpus-project`, `use-candidate-precedents` |
-| Design space — utils/types | `src/features/design-space/candidate-utils.ts`, `types.ts` | Candidate text composition + hand-written projection payload types |
+| Design space — hooks | `src/features/design-space/hooks/` | `use-surface-query` (gated on view), `use-locate-nodes`, `use-generate-at-mutation` (sends coords + AbortSignal), `use-corpus-project`, `use-candidate-precedents`, `use-relevance-query` (lens), `use-axes-query`, `use-pan-zoom` (shared canvas grammar) |
+| Design space — utils/types | `src/features/design-space/candidate-utils.ts`, `types.ts` | Candidate text composition + hand-written projection payload types (incl. axes) |
+| Shared interactions | `src/lib/view-interactions.ts`, `src/lib/svg-glyphs.ts` | One zoom factor/range for ALL canvases (the mind map mirrors it via mind-elixir `handleWheel` + `mouseSelectionButton: 2`); shared star glyph |
 | Export | `src/lib/export-exploration.ts` | Markdown exploration record (taxonomy + states, candidates, provenance) |
 
 ---

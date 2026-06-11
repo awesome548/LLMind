@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronRight, Download, Plus, Scale, Star, Trash2, X } from 'lucide-react';
+import { ChevronRight, Download, Focus, Plus, Scale, Star, Trash2, X } from 'lucide-react';
 import { useMemo } from 'react';
 import { Badge } from '@/src/components/ui/badge';
 import { Button } from '@/src/components/ui/button';
@@ -23,6 +23,14 @@ interface CandidatePanelProps {
   /** Open a corpus project in the Related Projects panel. */
   onOpenProject: (projectId: string) => void;
   onOpenCompare: () => void;
+  /** Aspect currently awaiting a click-picked option (the "—" flow). */
+  pendingAspectId?: string | null;
+  /** Arm the pick flow: the next click on an option of this aspect (in any
+   * view) fills the slot. */
+  onStartPickChoice?: (aspectId: string) => void;
+  onCancelPickChoice?: () => void;
+  /** Turn on the relevance lens anchored to this candidate (design space). */
+  onInspectRelevance?: () => void;
 }
 
 /**
@@ -34,6 +42,10 @@ export function CandidatePanel({
   descriptionByTopic,
   onOpenProject,
   onOpenCompare,
+  pendingAspectId = null,
+  onStartPickChoice,
+  onCancelPickChoice,
+  onInspectRelevance,
 }: CandidatePanelProps) {
   const nodes = useMindmapStore((s) => s.nodes);
   const candidates = useMindmapStore((s) => s.candidates);
@@ -169,8 +181,24 @@ export function CandidatePanel({
                             <X className="h-3 w-3" />
                           </button>
                         </span>
+                      ) : pendingAspectId === row.aspectId ? (
+                        <button
+                          type="button"
+                          onClick={() => onCancelPickChoice?.()}
+                          className="flex items-center gap-1 whitespace-nowrap rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-700 animate-pulse"
+                          title="Click an option of this aspect in the map or space — or click here to cancel"
+                        >
+                          click an option… <X className="h-3 w-3" />
+                        </button>
                       ) : (
-                        <span className="text-muted-foreground/50">—</span>
+                        <button
+                          type="button"
+                          onClick={() => onStartPickChoice?.(row.aspectId)}
+                          className="rounded-full px-2 py-0.5 text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
+                          title={`Pick an option for ${row.aspectTopic}: click here, then click an option in the map or space`}
+                        >
+                          — pick
+                        </button>
                       )}
                     </div>
                   ))}
@@ -179,8 +207,9 @@ export function CandidatePanel({
                   )}
                 </div>
                 <p className="text-[10px] leading-snug text-muted-foreground">
-                  Select an option (map or space) and use &ldquo;Choose&rdquo; in the
-                  Context panel to fill a slot.
+                  {pendingAspectId
+                    ? 'Now click an option of that aspect in the mind map or design space.'
+                    : 'Fill a slot via "— pick", or select an option and use "Choose" in the Context panel.'}
                 </p>
 
                 {/* Closest real precedents to the COMPOSED design */}
@@ -213,7 +242,22 @@ export function CandidatePanel({
               </p>
             )}
 
-            <div className="flex items-center gap-2 pt-1">
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 rounded-full px-3 text-[11px]"
+                onClick={onInspectRelevance}
+                disabled={!candidateText}
+                title={
+                  candidateText
+                    ? 'Color the design space by relevance to this candidate'
+                    : 'Choose at least one option first'
+                }
+              >
+                <Focus className="h-3 w-3" />
+                Relevance
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

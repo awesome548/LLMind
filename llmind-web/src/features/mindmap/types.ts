@@ -50,3 +50,16 @@ export interface OptionStateEntry {
   state: 'rejected';
   reason?: string;
 }
+
+/** One semantic axis of the Perspectives view: a bipolar dimension between two
+ * option "poles" of one aspect. */
+export interface AxisEndConfig {
+  aspectId: string;
+  poleAId: string;
+  poleBId: string;
+}
+
+export interface AxesConfig {
+  x: AxisEndConfig;
+  y: AxisEndConfig;
+}

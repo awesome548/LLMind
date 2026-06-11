@@ -28,6 +28,7 @@ from utils.clients import build_vllm_client
 from utils.modes import BackendMode
 from utils.prompts import GENERATE_AT_PROMPT, GENERATE_AT_PROMPT_VERSION
 from pipeline import projection as proj
+from backend.corpus.service import load_corpus_vectors as _load_corpus_vectors
 from backend.corpus.service import load_index_meta
 from backend.related_projects.service import (
     ServiceError,
@@ -220,26 +221,6 @@ def nearest_corpus(x: float, y: float, k: int) -> List[Dict[str, Any]]:
     return [_neighbour_record(str(points[i]["id"]), points[i]) for i in idxs]
 
 
-# Cache of the corpus's original (unit-normalised) embeddings for inverse seeding.
-_CORPUS_CACHE: Dict[str, Any] = {}
-
-
-def _load_corpus_vectors() -> tuple[List[str], np.ndarray]:
-    """(ids, unit-normalised vectors) from the local index, cached by mtime."""
-    path = Path(settings.local_index_path)
-    if not path.exists():
-        return [], np.empty((0, 0))
-    mtime = path.stat().st_mtime
-    if _CORPUS_CACHE.get("mtime") != mtime:
-        data = np.load(path, allow_pickle=True)
-        ids = [str(i) for i in data["ids"].tolist()]
-        vecs = np.asarray(data["vectors"], dtype=float)
-        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        _CORPUS_CACHE.update(mtime=mtime, ids=ids, vecs=vecs / norms)
-    return _CORPUS_CACHE["ids"], _CORPUS_CACHE["vecs"]
-
-
 def _anchor_seed_corpus(x: float, y: float, k: int) -> List[Dict[str, Any]]:
     """Legacy seeding: the single nearest project's true-metric neighbourhood.
 
@@ -370,6 +351,91 @@ def seed_corpus(x: float, y: float, k: int) -> List[Dict[str, Any]]:
 # Located taxonomy nodes within this radius of the click count as "nearby
 # existing ideas" the prompt must not duplicate (~6 lattice cells at R=48).
 NEARBY_OPTIONS_RADIUS = 0.12
+
+
+def compute_axes(
+    *,
+    x_pole_a: str,
+    x_pole_b: str,
+    y_pole_a: str,
+    y_pole_b: str,
+    items: List[Dict[str, str]] | None = None,
+) -> Dict[str, Any]:
+    """Exact bipolar coordinates for the semantic-axes perspective.
+
+    ``score_axis(v) = cos(v, pole_a) − cos(v, pole_b)`` in the ORIGINAL embedding
+    metric — no UMAP, no stochasticity, no distortion ("exact by construction").
+    Corpus scores are min-max normalised per axis to [-1, 1]; taxonomy/candidate
+    items use the corpus range and are clipped (and flagged) when outside it.
+    Diagnostics expose degenerate axes (poles too similar) and redundant axis
+    pairs (high |corr| → points hug the diagonal).
+    """
+    ids, vecs = _load_corpus_vectors()
+    if not ids:
+        raise ServiceError(
+            "Corpus vectors not found — build the local index with build_local_index.py."
+        )
+
+    valid_items = [
+        it for it in (items or [])
+        if (it.get("text") or "").strip() and it.get("node_id")
+    ]
+    texts = [x_pole_a, x_pole_b, y_pole_a, y_pole_b] + [it["text"] for it in valid_items]
+    embeddings = _embed_texts(texts)
+    if embeddings.shape[1] != vecs.shape[1]:
+        raise ServiceError(
+            f"Embedding dim {embeddings.shape[1]} != corpus dim {vecs.shape[1]} — the "
+            f"runtime embedding model differs from the one the index was built with."
+        )
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    unit = embeddings / norms
+    pole_ax, pole_bx, pole_ay, pole_by = unit[0], unit[1], unit[2], unit[3]
+    item_vecs = unit[4:]
+
+    raw_x = vecs @ pole_ax - vecs @ pole_bx
+    raw_y = vecs @ pole_ay - vecs @ pole_by
+    x_lo, x_hi = float(raw_x.min()), float(raw_x.max())
+    y_lo, y_hi = float(raw_y.min()), float(raw_y.max())
+
+    def _norm(value: float, lo: float, hi: float) -> float:
+        if math.isclose(hi, lo):
+            return 0.0
+        return 2.0 * (value - lo) / (hi - lo) - 1.0
+
+    corpus = [
+        {"id": pid, "x": _norm(float(rx), x_lo, x_hi), "y": _norm(float(ry), y_lo, y_hi)}
+        for pid, rx, ry in zip(ids, raw_x, raw_y)
+    ]
+
+    located_items: List[Dict[str, Any]] = []
+    for it, vec in zip(valid_items, item_vecs):
+        ix = _norm(float(vec @ pole_ax - vec @ pole_bx), x_lo, x_hi)
+        iy = _norm(float(vec @ pole_ay - vec @ pole_by), y_lo, y_hi)
+        clipped = abs(ix) > 1.0 or abs(iy) > 1.0
+        located_items.append(
+            {
+                "node_id": it["node_id"],
+                "x": max(-1.0, min(1.0, ix)),
+                "y": max(-1.0, min(1.0, iy)),
+                "clipped": clipped,
+            }
+        )
+
+    if float(raw_x.std()) > 0 and float(raw_y.std()) > 0:
+        axis_corr = float(np.corrcoef(raw_x, raw_y)[0, 1])
+    else:
+        axis_corr = 0.0
+
+    return {
+        "corpus": corpus,
+        "items": located_items,
+        "meta": {
+            "x_pole_sim": float(pole_ax @ pole_bx),
+            "y_pole_sim": float(pole_ay @ pole_by),
+            "axis_corr": axis_corr,
+        },
+    }
 
 
 def _derive_parent_aspect(

@@ -3,7 +3,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
-from backend.corpus.service import CorpusServiceError, get_project, similar_projects
+from backend.corpus.service import (
+    CorpusServiceError,
+    get_project,
+    relevance_scores,
+    similar_projects,
+)
 
 router = APIRouter(prefix="/api/corpus", tags=["corpus"])
 
@@ -37,6 +42,34 @@ def post_similar_projects(payload: SimilarProjectsRequest) -> SimilarProjectsRes
     try:
         rows = similar_projects(payload.text, payload.k)
         return SimilarProjectsResponse(projects=[SimilarProject(**row) for row in rows])
+    except CorpusServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
+
+
+class RelevanceRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class RelevanceScore(BaseModel):
+    id: str
+    score: float
+
+
+class RelevanceResponse(BaseModel):
+    scores: list[RelevanceScore] = Field(default_factory=list)
+    min: float
+    max: float
+
+
+@router.post("/relevance", response_model=RelevanceResponse)
+def post_relevance(payload: RelevanceRequest) -> RelevanceResponse:
+    """True cosine similarity of every corpus project to a text — powers the
+    design-space relevance lens (scores-only; min/max included so the client
+    can normalise and label the painting as RELATIVE relevance)."""
+    try:
+        return RelevanceResponse(**relevance_scores(payload.text))
     except CorpusServiceError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)

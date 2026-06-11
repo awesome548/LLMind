@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from backend import jobs
 from backend.projection.service import (
     ServiceError,
+    compute_axes,
     generate_at as generate_at_service,
     load_surface,
     locate_nodes as locate_nodes_service,
@@ -92,6 +93,76 @@ def locate(payload: LocateRequest) -> LocateResponse:
     try:
         located = locate_nodes_service([item.model_dump() for item in payload.items])
         return LocateResponse(points=[LocatedPoint(**p) for p in located])
+    except ServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
+# ── /axes ─────────────────────────────────────────────────────────────────────
+
+
+class AxisPole(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class AxisSpec(BaseModel):
+    pole_a: AxisPole
+    pole_b: AxisPole
+
+
+class AxesItem(BaseModel):
+    node_id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+
+
+class AxesRequest(BaseModel):
+    x: AxisSpec
+    y: AxisSpec
+    items: list[AxesItem] = Field(default_factory=list)
+
+
+class AxesPoint(BaseModel):
+    id: str
+    x: float
+    y: float
+
+
+class AxesItemPoint(BaseModel):
+    node_id: str
+    x: float
+    y: float
+    # True when the raw score fell outside the corpus range (rendered as an
+    # edge marker — "outside corpus range", same honesty rule as clipping).
+    clipped: bool
+
+
+class AxesMeta(BaseModel):
+    # cos(pole_a, pole_b) per axis — near 1.0 means the axis collapses.
+    x_pole_sim: float
+    y_pole_sim: float
+    # Pearson r of corpus x vs y scores — near ±1 means the axes are redundant.
+    axis_corr: float
+
+
+class AxesResponse(BaseModel):
+    corpus: list[AxesPoint] = Field(default_factory=list)
+    items: list[AxesItemPoint] = Field(default_factory=list)
+    meta: AxesMeta
+
+
+@router.post("/axes", response_model=AxesResponse)
+def axes(payload: AxesRequest) -> AxesResponse:
+    """Exact bipolar coordinates for the semantic-axes perspective: every corpus
+    project (and any taxonomy/candidate items) scored against two designer-chosen
+    pole pairs in the original embedding metric."""
+    try:
+        result = compute_axes(
+            x_pole_a=payload.x.pole_a.text,
+            x_pole_b=payload.x.pole_b.text,
+            y_pole_a=payload.y.pole_a.text,
+            y_pole_b=payload.y.pole_b.text,
+            items=[item.model_dump() for item in payload.items],
+        )
+        return AxesResponse(**result)
     except ServiceError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
