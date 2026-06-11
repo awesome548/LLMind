@@ -109,23 +109,67 @@ curl -s -X POST http://localhost:8000/api/related-projects/generate-nodes \
 
 Frozen 2D projection of the project corpus for the design-space visualization. Fit
 once with the CLI (`uv run python database_pipeline.py project`), then served/queried
-at runtime. See [`../DESIGN-SPACE-VIZ.md`](../DESIGN-SPACE-VIZ.md) and
-[`../DESIGN-SPACE-ITERATION-PLAN.md`](../DESIGN-SPACE-ITERATION-PLAN.md).
+at runtime. See [`DESIGN-SPACE-VIZ.md`](../documentations/DESIGN-SPACE-VIZ.md) and
+[`DESIGN-SPACE-ITERATION-PLAN.md`](../documentations/DESIGN-SPACE-ITERATION-PLAN.md).
 
 | Endpoint | Purpose | Needs embed/LLM server |
 |---|---|---|
 | `GET /api/projection/surface` | Precomputed corpus background: grid spec, points, density; `meta.trustworthiness` reports layout fidelity | No |
-| `POST /api/projection/locate` | Embed node text → coords in the frozen space (`{items:[{node_id,text}]}`); each point carries `confidence` (true-vs-2D neighbourhood Jaccard, None = unscorable) | Yes (embed) |
+| `POST /api/projection/locate` | Embed node text → coords in the frozen space (`{items:[{node_id,text}]}`). **Placement is evidence-anchored (Part 11):** the similarity-weighted centroid of the top-k corpus neighbours' frozen coordinates — the same anchors that drive `support` — so a point sits amid its precedents (frozen `UMAP.transform()` is the fallback when corpus/surface artifacts are missing; `clipped` is only meaningful there). Each point carries `confidence` (true-vs-2D neighbourhood Jaccard) and `support` — the corpus-support percentile read against the **short-register baseline** fitted by `project-align` ("as much evidence as a real project described at node length"; falls back to the full-register self-support yardstick when no map exists). When `register_map.npz` exists (and `REGISTER_ALIGNMENT` isn't false), embeddings are register-corrected first | Yes (embed) |
+| `POST /api/projection/peek` | **Gap preview (E1):** the deterministic seed set a generate-at would use + nearby explored ideas + the derived parent aspect — shown BEFORE any LLM time is spent | No |
 | `POST /api/projection/generate-at` | **Async.** Location-conditioned generation: clicked `(x,y)` + optional `coords` (located nodes) → seeds that **bracket** the gap, parent aspect **derived from the click**, options with `desc`, per-node `drift` + `mean_drift` | Yes (embed + LLM) |
 | `POST /api/projection/axes` | Semantic-axes perspective: `{x:{pole_a,pole_b}, y:{...}, items}` → exact bipolar cosine coords for corpus + items (clip-flagged), with diagnostics (`x/y_pole_sim`, `axis_corr`) | Yes (embed) |
+| `POST /api/projection/metrics` | **Examine strips (Part 10):** a LIST of bipolar metrics → per metric the FULL corpus score distribution, clip-flagged item scores, `pole_sim`; plus the pairwise metric correlation matrix (rubric redundancy) | Yes (embed) |
 
 `generate-at` behaviour: seeds come from `seed_corpus` (`SEED_STRATEGY=bracket` default,
 `anchor` = legacy single-neighbourhood; switchable for A/B). Every call appends a JSONL
-row to `data/projection/generate_log.jsonl` (`prompt_version`, `seed_strategy`, target,
-seeds, per-node drift) — the evaluation dataset for prompt/seeding variants.
+row to `data/projection/generate_log.jsonl` (`prompt_version`, `seed_strategy`,
+`register_aligned`, `placement`, target, seeds, per-node `desc`/drift/`clipped`/`support`)
+— the evaluation dataset for prompt/seeding/alignment variants. Drift means different
+things under different placement regimes, so stats never aggregate across them.
+Analyse with `uv run python database_pipeline.py project-log-stats` (drift mean/median +
+clipped rate per `prompt_version` × `seed_strategy` × `register_aligned` × `placement`;
+pure logic in `pipeline/log_stats.py`).
+
+### Placement validity (Iterations H + J)
+
+The register gap — short node texts vs the full-description corpus index — is
+measured and corrected (ITERATION-PLAN Part 9):
+
+```bash
+uv run python database_pipeline.py project-align     # fit short→long register map (needs embed server)
+uv run python database_pipeline.py project-diagnose  # reproducible validity report (add --offline to skip embedding)
+```
+
+`project-align` learns an affine short→long correction from the corpus's own
+(name+first-sentences, full-text) pairs, reports HELD-OUT cosine/displacement/clip
+metrics — including the **UMAP-transform vs evidence-anchored kNN** placement
+comparison that motivated Part 11 (kNN k=5: median displacement 0.149 vs 0.179,
+clip 0% vs 35% on corpus short-register round-trips) — and saves
+`data/projection/register_map.npz`; `/locate` applies it (`REGISTER_ALIGNMENT=false`
+disables). The same fit also persists the **short-register support baseline**
+(sorted mean-top-k cosines of the out-of-fold corrected short texts,
+self-excluded) inside the artifact — the yardstick that makes node-length support
+percentiles meaningful (the full-register self-support distribution flattens
+every short text to the 0th percentile). Every located point carries a continuous
+corpus `support` percentile (`backend/corpus/service.py`). The `SOFT_MARGIN`
+soft-clip band (`pipeline/projection.py`) now only concerns the fallback
+transform path — the primary kNN placement cannot leave the corpus footprint.
 
 `surface`/`locate` return `502` with `ServiceError` detail on failure. Artifacts live in
 `data/projection/` (`model.joblib`, `surface.json`); path is `settings.projection_dir`.
+
+### Candidates (dual-layer designs — Part 10)
+
+| Endpoint | Purpose | Needs embed/LLM server |
+|---|---|---|
+| `POST /api/candidates/draft-brief` | **Async job.** Draft the candidate's BRIEF (identity layer) from its committed choices — project-register prose the designer edits | Yes (LLM) |
+| `POST /api/candidates/alignment` | How the brief and the choices agree: `agreement` = cos(brief, composition) + per aspect whether the brief leans toward the chosen option or its strongest (data-picked) competitor | Yes (embed) |
+
+`generate-at` accepts an optional `brief` (the active candidate's concept) as
+prompt context — the squiggle hypothesis: convergence material feeding a
+divergence step. Each log row records `brief_context` so `project-log-stats`
+(now `prompt × seeding × aligned × brief`) can measure the effect.
 
 ### Corpus
 
@@ -167,7 +211,8 @@ process-local (single-process server only), pruned after 30 min.
 | Entry point | `backend/main.py` | Mounts routers; CORS (browser calls backend directly) |
 | Router/Service — projection | `backend/projection/{router,service}.py` | Surface, node location (+confidence), generate-at (bracket seeds, derived parent, drift, JSONL log) |
 | Router/Service — corpus | `backend/corpus/{router,service}.py` | Corpus metadata reader (shared), project-by-id, true-metric similarity search |
-| Projection core | `pipeline/projection.py` | Frozen PCA→UMAP reducer, persistence, grid, density, nearest, trustworthiness |
+| Projection core | `pipeline/projection.py` | Frozen PCA→UMAP reducer, persistence, grid, density, nearest, trustworthiness, soft-clip margin, evidence-anchored `place_by_neighbors` (Part 11) |
+| Register alignment | `pipeline/register_alignment.py` | Short→long embedding correction: fit (CV: translation vs ridge), apply, persistence |
 | Async jobs | `backend/jobs.py` + `backend/jobs_router.py` | Background thread pool + `GET /api/jobs/{id}` polling for long generation |
 | Config | `config.py` | Single `Settings` instance via pydantic-settings |
 | Router — taxonomy | `backend/taxonomy/router.py` | Request validation; catches `TaxonomyServiceError` → 502 |
@@ -200,6 +245,7 @@ All loaded from `.env` in `llmind-python/`. Override any by setting the env var.
 | `VLLM_MODEL` | `qwen` | No | |
 | `VLLM_EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | No | |
 | `SEED_STRATEGY` | `bracket` | No | generate-at seeding: `bracket` (surround the gap) or `anchor` (legacy) |
+| `REGISTER_ALIGNMENT` | `true` | No | Apply the fitted short→long register correction in `/locate` (needs `register_map.npz`) |
 | `DATA_DIR` | `data` | No | Root for data files |
 | `TAXONOMY_DIR` | `taxonomy` | No | Output path for generated taxonomies |
 

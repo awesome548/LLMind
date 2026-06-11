@@ -4,6 +4,18 @@
 > This guide walks you through the entire LLMind codebase from the simplest ideas to the most advanced patterns, building your understanding one layer at a time.
 > **Scope:** This guide covers only the two active codebases — `llmind-python/` and `llmind-web/`.
 
+> ⚠️ **Currency note (2026-06):** this guide predates the design-space exploration
+> features and describes the foundations only. The tool has since gained: the
+> **Design Space** view (frozen UMAP surface, gap preview → generate-at, relevance
+> lens), the **Perspectives** view (semantic axes), **design candidates**
+> (compose / compare / reject / export), provenance, fidelity metrics, session
+> save/load, and an evaluation log. For the current state read
+> [`DESIGN-SPACE-ITERATION-PLAN.md`](DESIGN-SPACE-ITERATION-PLAN.md) (concepts &
+> history), [`llmind-web/FRONTEND.md`](../llmind-web/FRONTEND.md) and
+> [`llmind-python/BACKEND.md`](../llmind-python/BACKEND.md) (architecture &
+> endpoints). The foundations below (pipeline, embeddings, taxonomy generation,
+> router/service pattern) are still accurate.
+
 ---
 
 ## 🚀 Quick Launch
@@ -1435,7 +1447,7 @@ You do **not** need to touch any code. Everything is driven by a handful of envi
 
 ### 11.1 How LLMind Talks to Models
 
-Every LLM call in the backend goes through one of two client factories in [`utils/clients.py`](llmind-python/utils/clients.py):
+Every LLM call in the backend goes through one of two client factories in [`utils/clients.py`](../llmind-python/utils/clients.py):
 
 ```python
 def build_openai_client() -> OpenAI:
@@ -1464,7 +1476,7 @@ VLLM_MODEL=qwen2.5:7b-instruct            # chat/generation model name
 VLLM_EMBED_MODEL=BAAI/bge-small-en-v1.5   # embedding model name (pipeline only)
 ```
 
-To *select* the local backend at request time you pass `mode: "vllm"` — either from the frontend dialogs (the **Generate Taxonomy** and **Generate Nodes** dialogs both have an "openai / vllm" dropdown) or directly in the API payload. When `mode = "vllm"`, the backend reads `VLLM_BASE_URL` and `VLLM_MODEL` from your `.env` automatically (see [`taxonomy/service.py`](llmind-python/backend/taxonomy/service.py)).
+To *select* the local backend at request time you pass `mode: "vllm"` — either from the frontend dialogs (the **Generate Taxonomy** and **Generate Nodes** dialogs both have an "openai / vllm" dropdown) or directly in the API payload. When `mode = "vllm"`, the backend reads `VLLM_BASE_URL` and `VLLM_MODEL` from your `.env` automatically (see [`taxonomy/service.py`](../llmind-python/backend/taxonomy/service.py)).
 
 ---
 
@@ -1479,7 +1491,7 @@ This is the part most people get wrong, so be precise about it. `mode = "vllm"` 
 | Pipeline embeddings (`ingest` / `cluster` / `farthest` with `--embed-mode vllm`) | ✅ Yes | `--vllm-base-url`, stored in `embedding_local` `VECTOR(384)` |
 | **Related-projects search embedding** (`POST /api/related-projects/search`) | ❌ **No** | **Always OpenAI cloud** |
 
-> 🔑 **The search gotcha.** `search_related_projects()` in [`related_projects/service.py:216`](llmind-python/backend/related_projects/service.py:216) is hardcoded to `build_openai_client()`. It embeds the search query with OpenAI **regardless of `mode`**. So even in "local" mode, the *related projects* panel still needs a valid `OPENAI_API_KEY` — unless you skip Supabase entirely by sending `should_query_supabase: false`.
+> 🔑 **The search gotcha.** `search_related_projects()` in [`related_projects/service.py:216`](../llmind-python/backend/related_projects/service.py:216) is hardcoded to `build_openai_client()`. It embeds the search query with OpenAI **regardless of `mode`**. So even in "local" mode, the *related projects* panel still needs a valid `OPENAI_API_KEY` — unless you skip Supabase entirely by sending `should_query_supabase: false`.
 >
 > To go **fully local** for search as well, you'd have to edit that function to branch on `BackendMode` (the same way node generation does) and re-embed your corpus locally so the stored vectors match the query model's dimensions. That's a code change, not a config change.
 
@@ -1534,7 +1546,7 @@ curl -X POST 'http://localhost:8000/api/taxonomy/generate' `
 
 **LM Studio alternative:** load a model in LM Studio, click **Start Server** (Local Server tab). It serves at `http://localhost:1234/v1`. Set `VLLM_BASE_URL=http://localhost:1234/v1` and `VLLM_MODEL` to the model identifier LM Studio shows.
 
-> 🧩 **Structured-output support matters.** LLMind's vLLM path sends a strict JSON-schema `response_format` (see [`generate_taxonomy.py`](llmind-python/generate_taxonomy.py) `_make_strict_schema`). Pick a server/model that honors `response_format: json_schema`: recent Ollama (≥ 0.5), LM Studio, and vLLM all do. If responses fail validation, the model isn't returning schema-conformant JSON — switch to a stronger instruct model or a server with constrained decoding.
+> 🧩 **Structured-output support matters.** LLMind's vLLM path sends a strict JSON-schema `response_format` (see [`generate_taxonomy.py`](../llmind-python/generate_taxonomy.py) `_make_strict_schema`). Pick a server/model that honors `response_format: json_schema`: recent Ollama (≥ 0.5), LM Studio, and vLLM all do. If responses fail validation, the model isn't returning schema-conformant JSON — switch to a stronger instruct model or a server with constrained decoding.
 
 ---
 
@@ -1622,7 +1634,7 @@ The `embedding_local` column is `VECTOR(384)` — it fits `bge-small-en-v1.5` ex
 
 To switch local embedding models you must, in order:
 1. Set `VLLM_EMBED_MODEL` (and `--vllm-model` on the CLI) to the new model.
-2. Change `VECTOR(384)` to the new dimension in [`migrations/media_doc_tables.sql`](llmind-python/migrations/media_doc_tables.sql) (and the migration file), and re-run the migration.
+2. Change `VECTOR(384)` to the new dimension in [`migrations/media_doc_tables.sql`](../llmind-python/migrations/media_doc_tables.sql) (and the migration file), and re-run the migration.
 3. Re-run `uv run python database_pipeline.py ingest --embed-mode vllm` to repopulate `embedding_local`.
 
 If you only need **local generation** (taxonomy + nodes) and are happy to keep search on OpenAI, you can ignore this entire subsection.

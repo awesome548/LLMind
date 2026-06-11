@@ -38,6 +38,8 @@ export interface CandidateMarker {
   x: number;
   y: number;
   active: boolean;
+  /** Previous star positions (brief revisions) — the design's trajectory. */
+  trail?: Array<{ x: number; y: number }>;
 }
 
 interface PlacedNode {
@@ -47,9 +49,28 @@ interface PlacedNode {
   branchTopic: string | null;
   branchIndex: number;
   lineage: string[];
+  /** Lattice cell the continuous coordinate snaps into. */
   gx: number;
   gy: number;
+  /** Continuous coordinate in [0,1]. */
+  x: number;
+  y: number;
   confidence: number | null;
+  /** Corpus-support percentile — drives the dot's fill strength. */
+  support: number | null;
+}
+
+/** A gap preview in progress — what generating at (x, y) would be briefed with. */
+export interface GapPreview {
+  x: number;
+  y: number;
+  screenX: number;
+  screenY: number;
+  data: {
+    seeds: Array<{ id: string | null; Name: string }>;
+    nearby_options: string[];
+    parent_aspect: string | null;
+  } | null;
 }
 
 interface Props {
@@ -58,7 +79,12 @@ interface Props {
   coords: CoordMap;
   selection: MindmapSelection;
   onSelectNode: (selection: MindmapSelection) => void;
+  /** Confirmed generation (from the gap-preview popover). */
   onGenerateAt: (x: number, y: number) => void;
+  /** Clicking an empty cell opens the gap preview FIRST (no LLM committed). */
+  onPeekAt: (x: number, y: number, screen: { x: number; y: number }) => void;
+  preview?: GapPreview | null;
+  onDismissPreview?: () => void;
   /** Clicking a corpus (real project) glyph — open it for inspection. */
   onSelectProject?: (projectId: string) => void;
   isGenerating?: boolean;
@@ -108,8 +134,6 @@ function placeNodes(
     const c = coords[node.id];
     if (c && !seen.has(node.id)) {
       seen.add(node.id);
-      const gx = Math.min(resolution - 1, Math.max(0, Math.floor(c.x * resolution)));
-      const gy = Math.min(resolution - 1, Math.max(0, Math.floor(c.y * resolution)));
       placed.push({
         id: node.id,
         topic: node.topic,
@@ -117,9 +141,12 @@ function placeNodes(
         branchTopic,
         branchIndex,
         lineage: nextLineage,
-        gx,
-        gy,
+        gx: Math.min(resolution - 1, Math.max(0, Math.floor(c.x * resolution))),
+        gy: Math.min(resolution - 1, Math.max(0, Math.floor(c.y * resolution))),
+        x: c.x,
+        y: c.y,
         confidence: c.confidence ?? null,
+        support: c.support ?? null,
       });
     }
     (node.children ?? []).forEach((child, i) =>
@@ -139,6 +166,9 @@ export function DesignSpaceSurface({
   selection,
   onSelectNode,
   onGenerateAt,
+  onPeekAt,
+  preview = null,
+  onDismissPreview,
   onSelectProject,
   isGenerating = false,
   pendingCell = null,
@@ -169,11 +199,12 @@ export function DesignSpaceSurface({
   );
 
   // Unified canvas interactions (shared with the axes view; mirrored by the
-  // mind map). Tooltips and the viewport-fixed chooser dismiss on pan.
+  // mind map). Tooltips and the viewport-fixed popovers dismiss on pan.
   const { containerRef, view, movedRef, onPointerDown, onClickCapture, resetView } = usePanZoom(
     () => {
       setTip(null);
       setChooser(null);
+      onDismissPreview?.();
     }
   );
 
@@ -228,6 +259,9 @@ export function DesignSpaceSurface({
   // Continuous-coordinate variants (corpus glyphs sit at their true position).
   const px = useCallback((x: number) => x * VIEW, []);
   const py = useCallback((y: number) => VIEW - y * VIEW, []);
+  // Node dots snap to their lattice cell.
+  const nodeX = useCallback((p: PlacedNode) => cx(p.gx), [cx]);
+  const nodeY = useCallback((p: PlacedNode) => cy(p.gy), [cy]);
 
   // Aggregate density heat is redundant while individual corpus glyphs are
   // legible; it fades in as you zoom OUT and the glyphs shrink (overview mode).
@@ -296,19 +330,28 @@ export function DesignSpaceSurface({
               setHover((h) => (h?.gx === gx && h?.gy === gy ? null : h));
               setTip(null);
             }}
-            onClick={() =>
-              isDiscovered
-                ? onShowDiscovery?.(key)
-                : onGenerateAt((gx + 0.5) / R, (gy + 0.5) / R)
-            }
+            onClick={(e) => {
+              if (isDiscovered) {
+                onShowDiscovery?.(key);
+                return;
+              }
+              // Preview first — generation is committed from the popover.
+              e.stopPropagation();
+              const rect = e.currentTarget.getBoundingClientRect();
+              setTip(null);
+              onPeekAt((gx + 0.5) / R, (gy + 0.5) / R, {
+                x: rect.left + rect.width / 2,
+                y: rect.top,
+              });
+            }}
           />
         );
       }
     }
     return dots;
-  }, [R, cell, occupied, discoveredCells, onGenerateAt, onShowDiscovery, cx, cy]);
+  }, [R, cell, occupied, discoveredCells, onPeekAt, onShowDiscovery, cx, cy]);
 
-  // Hover/pending highlight overlay (cheap to re-render; non-interactive).
+  // Hover/pending/preview highlight overlay (cheap to re-render; non-interactive).
   const cellHighlights = (
     <g pointerEvents="none">
       {hover && !occupied.has(`${hover.gx},${hover.gy}`) && (
@@ -327,6 +370,17 @@ export function DesignSpaceSurface({
           cy={cy(pendingCell[1])}
           r={cell * 0.42}
           fill={DISCOVERED_COLOR}
+        />
+      )}
+      {preview && (
+        <circle
+          cx={cx(Math.min(R - 1, Math.floor(preview.x * R)))}
+          cy={cy(Math.min(R - 1, Math.floor(preview.y * R)))}
+          r={cell * 0.6}
+          fill="none"
+          stroke={DISCOVERED_COLOR}
+          strokeWidth={2.5}
+          strokeDasharray="5 4"
         />
       )}
     </g>
@@ -473,10 +527,12 @@ export function DesignSpaceSurface({
       onPointerDown={onPointerDown}
       onClickCapture={onClickCapture}
       onClick={(e) => {
-        // A click that didn't land on a dot (a <circle>; corpus <rect>s stop
-        // propagation themselves) is empty space → deselect + dismiss chooser.
+        // A click that didn't land on a dot (a <circle>; corpus <rect>s and
+        // peek-opening cells stop propagation themselves) is empty space →
+        // deselect + dismiss popovers.
         if (movedRef.current) return;
         setChooser(null);
+        onDismissPreview?.();
         const tag = (e.target as Element).tagName?.toLowerCase();
         if (tag !== 'circle') onBackgroundClick?.();
       }}
@@ -532,8 +588,8 @@ export function DesignSpaceSurface({
                 </radialGradient>
               </defs>
               <circle
-                cx={cx(node.gx)}
-                cy={cy(node.gy)}
+                cx={nodeX(node)}
+                cy={nodeY(node)}
                 r={radius}
                 fill={`url(#${gid})`}
                 pointerEvents="none"
@@ -550,8 +606,12 @@ export function DesignSpaceSurface({
             the lines land exactly on the target/source dots (not their raw coords). */}
         {trail &&
           (() => {
-            const snapX = (x: number) => cx(Math.min(R - 1, Math.max(0, Math.floor(x * R))));
-            const snapY = (y: number) => cy(Math.min(R - 1, Math.max(0, Math.floor(y * R))));
+            // Snap to the lattice cell the dots use; margin (out-of-[0,1])
+            // endpoints keep their continuous position, like the dots do.
+            const snapX = (x: number) =>
+              x < 0 || x > 1 ? px(x) : cx(Math.min(R - 1, Math.max(0, Math.floor(x * R))));
+            const snapY = (y: number) =>
+              y < 0 || y > 1 ? py(y) : cy(Math.min(R - 1, Math.max(0, Math.floor(y * R))));
             const fx = snapX(trail.from.x);
             const fy = snapY(trail.from.y);
             return (
@@ -591,9 +651,10 @@ export function DesignSpaceSurface({
           })()}
         {spinner}
 
-        {/* Node dots: colored by branch (shared with the mind map), snapped to the
-            lattice. A dashed outline marks low placement confidence — the node's
-            2D neighbourhood diverges from its true embedding neighbourhood. */}
+        {/* Node dots: colored by branch (shared with the mind map), snapped to
+            the lattice. A dashed outline marks low placement confidence; the
+            fill strength encodes corpus support — washed-out = little corpus
+            evidence for this point. */}
         {placed.map((p) => {
           const color = nodeColor(p.branchIndex, p.depth);
           const isExact = exactMatchIds.has(p.id);
@@ -607,10 +668,11 @@ export function DesignSpaceSurface({
           return (
             <g key={`n-${p.id}`}>
               <circle
-                cx={cx(p.gx)}
-                cy={cy(p.gy)}
+                cx={nodeX(p)}
+                cy={nodeY(p)}
                 r={r}
                 fill={color}
+                fillOpacity={p.support != null ? 0.3 + 0.7 * p.support : 1}
                 opacity={
                   lensActive && p.id !== lensAnchorId
                     ? 0.12 // the lens is about the corpus; non-anchor ideas recede
@@ -637,6 +699,7 @@ export function DesignSpaceSurface({
                   const notes = [
                     isRejected ? 'rejected' : null,
                     lowConfidence ? 'placement approximate' : null,
+                    p.support != null ? `corpus support ${(p.support * 100).toFixed(0)}%` : null,
                   ].filter(Boolean);
                   setTip({
                     x: rect.left + rect.width / 2,
@@ -698,8 +761,46 @@ export function DesignSpaceSurface({
             );
           })}
 
-        {/* Candidate designs: a composed choice-set is itself a point in the
-            space — drawn as a star at the embedding of its combined text. */}
+        {/* Candidate trajectory: where the ACTIVE design's star used to be —
+            brief revisions move it; the faded path is its migration through
+            precedent space (Part 10). */}
+        {(candidates ?? [])
+          .filter((c) => c.active && (c.trail?.length ?? 0) > 0)
+          .map((c) => {
+            const points = [...(c.trail ?? []), { x: c.x, y: c.y }];
+            return (
+              <g key={`ctrail-${c.id}`} pointerEvents="none">
+                {points.slice(0, -1).map((pt, i) => {
+                  const next = points[i + 1]!;
+                  const t = (i + 1) / points.length;
+                  return (
+                    <g key={`ctrail-${c.id}-${i}`}>
+                      <line
+                        x1={px(pt.x)}
+                        y1={py(pt.y)}
+                        x2={px(next.x)}
+                        y2={py(next.y)}
+                        stroke={CANDIDATE_COLOR}
+                        strokeWidth={1.5}
+                        strokeDasharray="3 4"
+                        opacity={0.15 + 0.35 * t}
+                      />
+                      <circle
+                        cx={px(pt.x)}
+                        cy={py(pt.y)}
+                        r={cell * 0.16}
+                        fill={CANDIDATE_COLOR}
+                        opacity={0.15 + 0.35 * t}
+                      />
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })}
+
+        {/* Candidate designs: each design (its brief when written, else its
+            composed choices) is itself a point in the space — drawn as a star. */}
         {(candidates ?? []).map((c) => {
           const sx = px(c.x);
           const sy = py(c.y);
@@ -751,6 +852,79 @@ export function DesignSpaceSurface({
           <div className="max-w-[16rem] rounded-lg border bg-background/95 px-2.5 py-1.5 shadow-lg backdrop-blur">
             <div className="truncate text-xs font-semibold text-foreground">{tip.label}</div>
             {tip.sub && <div className="mt-0.5 text-[10px] text-muted-foreground">{tip.sub}</div>}
+          </div>
+        </div>
+      )}
+
+      {/* Gap preview — what generating HERE would be briefed with (E1) */}
+      {preview && (
+        <div
+          className="fixed z-50 -translate-x-1/2 -translate-y-full"
+          style={{ left: preview.screenX, top: preview.screenY - 10 }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="w-[17rem] rounded-lg border bg-background/95 p-2.5 shadow-lg backdrop-blur">
+            {preview.data ? (
+              <>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Explore this gap
+                </p>
+                {preview.data.parent_aspect && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    New options would join{' '}
+                    <span className="font-semibold text-foreground">
+                      {preview.data.parent_aspect}
+                    </span>
+                  </p>
+                )}
+                <p className="mt-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Seeded by
+                </p>
+                <ul className="mt-0.5 space-y-0.5">
+                  {preview.data.seeds.map((seed, idx) => (
+                    <li key={seed.id ?? idx}>
+                      <button
+                        type="button"
+                        disabled={!seed.id}
+                        onClick={() => seed.id && onSelectProject?.(seed.id)}
+                        className="w-full truncate rounded px-1 py-0.5 text-left text-[11px] transition-colors enabled:hover:bg-muted"
+                        title={seed.id ? 'View this project' : undefined}
+                      >
+                        {seed.Name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {preview.data.nearby_options.length > 0 && (
+                  <p className="mt-1.5 text-[10px] text-muted-foreground">
+                    Already explored nearby: {preview.data.nearby_options.join(', ')}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="flex items-center gap-2 py-1 text-[11px] text-muted-foreground">
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+                Reading the neighbourhood…
+              </p>
+            )}
+            <div className="mt-2 flex items-center justify-end gap-1.5 border-t pt-2">
+              <button
+                type="button"
+                onClick={() => onDismissPreview?.()}
+                className="rounded-full px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!preview.data}
+                onClick={() => onGenerateAt(preview.x, preview.y)}
+                className="rounded-full bg-sky-500 px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-sky-600 disabled:opacity-50"
+              >
+                Generate here
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -856,6 +1030,16 @@ export function DesignSpaceSurface({
           <div className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: nodeColor(0, 1) }} />
             taxonomy node (dashed = approximate)
+          </div>
+          <div
+            className="flex items-center gap-1.5"
+            title="Corpus-support percentile in the original embedding metric — how much corpus evidence exists for this idea"
+          >
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-full border"
+              style={{ background: nodeColor(0, 1), opacity: 0.35 }}
+            />
+            washed-out = little corpus support
           </div>
           {(candidates?.length ?? 0) > 0 && (
             <div className="flex items-center gap-1.5">

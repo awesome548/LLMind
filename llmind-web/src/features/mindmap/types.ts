@@ -33,15 +33,31 @@ export interface NodeProvenance {
   createdAt: number;
 }
 
-/** A candidate design: one chosen option per aspect — a point in the
- * morphological design space (not just a catalog entry). */
+/** A candidate design with two layers (ITERATION-PLAN Part 10): the BRIEF is
+ * what the design *is* (designer prose, the primary embedding); the CHOICES are
+ * what it *commits to* (one option per aspect). Their divergence is measured,
+ * never silently reconciled. */
 export interface DesignCandidate {
   id: string;
   name: string;
   /** aspect node id → chosen option node id (radio semantics per aspect). */
   choices: Record<string, string>;
+  /** The identity layer: the designer's project-style description. */
+  brief?: string;
+  /** Previous star positions (brief edits move the star) — the design's
+   * trajectory through precedent space, capped. */
+  trail?: Array<{ x: number; y: number }>;
   note?: string;
   createdAt: number;
+}
+
+/** One saved Perspectives metric: a bipolar dimension between two option poles
+ * of one aspect — part of the project's persistent examination rubric. */
+export interface RubricMetric {
+  id: string;
+  aspectId: string;
+  poleAId: string;
+  poleBId: string;
 }
 
 /** Pruning state for an option ("open" is the implicit default; "chosen" is

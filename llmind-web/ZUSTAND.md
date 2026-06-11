@@ -19,10 +19,6 @@ interface MindmapStoreState {
   contextDescription: string;    // Description of the selected topic
   selectedTopic: string;         // Currently active topic name
 
-  // ── Projects ───────────────────────────────────────────────────
-  projects: MindmapProjectSchema[];
-  projectsLoading: boolean;
-
   // ── Generated taxonomy + working tree ──────────────────────────
   taxonomy: TaxonomyInput | null;       // Last result from POST /api/taxonomy/generate
   nodes: ReadonlyArray<MindmapNode>;    // The working tree (incl. generated nodes)
@@ -33,13 +29,15 @@ interface MindmapStoreState {
   provenance: Record<string, NodeProvenance>;   // node.id → seeds/click/source
   descriptionById: Record<string, string>;      // generated nodes' one-line descs
 
-  // ── Candidates + pruning (Iteration C) ─────────────────────────
-  candidates: Record<string, DesignCandidate>;  // id → {name, choices, note}
+  // ── Candidates + pruning (Iteration C; dual-layer since Part 10) ─
+  candidates: Record<string, DesignCandidate>;  // id → {name, choices, brief?, trail?, note}
   activeCandidateId: string | null;
   optionState: Record<string, OptionStateEntry>; // node.id → {state:'rejected', reason?}
 
-  // ── Internal ───────────────────────────────────────────────────
-  jmRef: unknown | null;           // mind-elixir instance ref
+  // ── Perspectives (Part 10) ─────────────────────────────────────
+  axesConfig: AxesConfig | null;     // the scatter tab's chosen poles
+  rubric: RubricMetric[];            // persistent examination metrics
+  usage: Record<string, number>;     // feature-usage counters (instrumentation)
 
   // ── Actions ────────────────────────────────────────────────────
   selectTopic(input: MindmapSelectionInput): void;
@@ -57,9 +55,14 @@ interface MindmapStoreState {
   setActiveCandidate(id | null): void;
   renameCandidate(id, name): void;
   setChoice(aspectId, optionId | null): void;  // active candidate, radio per aspect
+  setCandidateBrief(id, brief): void;   // the identity layer (primary embedding)
+  appendCandidateTrail(id, point): void; // previous star positions, capped at 10
+  addRubricMetric(metric) / removeRubricMetric(metricId): void;
   rejectOption(nodeId, reason?): void;
   reopenOption(nodeId): void;
-  setProjects / setProjectsLoading / setContext / setMindmapData / setJmRef / resetMindmapStore
+  trackUsage(event): void;
+  restoreSession(snapshot): void;   // defaults-first, so old session files reset new slices
+  resetMindmapStore(): void;
 }
 ```
 
@@ -67,13 +70,16 @@ interface MindmapStoreState {
 
 ## Persistence
 
-Persisted via `partialize`: `contextText`, `contextDescription`, `selectedTopic`,
-`projects`, `taxonomy`, **`nodes`**, **`coords`**, **`discovered`**,
-**`provenance`**, **`descriptionById`**, **`candidates`**,
-**`activeCandidateId`**, **`optionState`**.
+Persisted via `partialize` (= `selectSessionSnapshot`, also the session-file
+payload): `contextText`, `contextDescription`, `selectedTopic`,
+`taxonomy`, **`nodes`**, **`coords`**, **`discovered`**, **`provenance`**,
+**`descriptionById`**, **`candidates`** (incl. briefs + trails),
+**`activeCandidateId`**, **`optionState`**, **`axesConfig`**, **`rubric`**,
+**`usage`**.
 
-`jmRef` and loading flags are **not** persisted. The locate "attempted once"
-guard is session-local React state (a retry guard, not data).
+The Related Projects panel reads React Query data directly (nothing
+project-related lives in the store). The locate "attempted once" guard is
+session-local React state (a retry guard, not data).
 
 **Versioning:** bump `version` and extend `migrate` whenever the persisted shape
 changes. v1 → v2 rebuilt `nodes` from the persisted taxonomy and started the

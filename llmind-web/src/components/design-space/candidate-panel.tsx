@@ -1,6 +1,18 @@
 'use client';
 
-import { ChevronRight, Download, Focus, Plus, Scale, Star, Trash2, X } from 'lucide-react';
+import {
+  ChevronRight,
+  Download,
+  Focus,
+  Loader2,
+  Plus,
+  Scale,
+  Sparkles,
+  SlidersHorizontal,
+  Star,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useMemo } from 'react';
 import { Badge } from '@/src/components/ui/badge';
 import { Button } from '@/src/components/ui/button';
@@ -12,9 +24,10 @@ import {
 import { Input } from '@/src/components/ui/input';
 import {
   candidateChoiceRows,
-  composeCandidateText,
+  candidateEmbeddingText,
 } from '@/src/features/design-space/candidate-utils';
 import { useCandidatePrecedentsQuery } from '@/src/features/design-space/hooks/use-candidate-precedents';
+import { useDraftBriefMutation } from '@/src/features/design-space/hooks/use-draft-brief-mutation';
 import { buildExplorationMarkdown, downloadTextFile } from '@/src/lib/export-exploration';
 import { useMindmapStore } from '@/src/store/mindmap-store';
 
@@ -31,6 +44,11 @@ interface CandidatePanelProps {
   onCancelPickChoice?: () => void;
   /** Turn on the relevance lens anchored to this candidate (design space). */
   onInspectRelevance?: () => void;
+  /** Open the Perspectives view to examine this candidate against metrics. */
+  onOpenExamine?: () => void;
+  /** Controlled collapse state (the page collapses panels in the Examine view). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 /**
@@ -46,6 +64,9 @@ export function CandidatePanel({
   onStartPickChoice,
   onCancelPickChoice,
   onInspectRelevance,
+  onOpenExamine,
+  open,
+  onOpenChange,
 }: CandidatePanelProps) {
   const nodes = useMindmapStore((s) => s.nodes);
   const candidates = useMindmapStore((s) => s.candidates);
@@ -55,10 +76,13 @@ export function CandidatePanel({
   const setActiveCandidate = useMindmapStore((s) => s.setActiveCandidate);
   const renameCandidate = useMindmapStore((s) => s.renameCandidate);
   const setChoice = useMindmapStore((s) => s.setChoice);
+  const setCandidateBrief = useMindmapStore((s) => s.setCandidateBrief);
   const descriptionById = useMindmapStore((s) => s.descriptionById);
   const optionState = useMindmapStore((s) => s.optionState);
   const provenance = useMindmapStore((s) => s.provenance);
   const coords = useMindmapStore((s) => s.coords);
+  const discovered = useMindmapStore((s) => s.discovered);
+  const trackUsage = useMindmapStore((s) => s.trackUsage);
 
   const candidateList = useMemo(
     () => Object.values(candidates).sort((a, b) => a.createdAt - b.createdAt),
@@ -68,14 +92,39 @@ export function CandidatePanel({
   const rows = useMemo(() => candidateChoiceRows(active, nodes), [active, nodes]);
   const chosenCount = rows.filter((r) => r.optionId).length;
 
+  // Brief-first: precedents and the lens describe the actual design (Part 10).
   const candidateText = useMemo(
-    () => composeCandidateText(active, nodes, descriptionByTopic, descriptionById),
+    () => candidateEmbeddingText(active, nodes, descriptionByTopic, descriptionById),
     [active, nodes, descriptionByTopic, descriptionById]
   );
   const { data: precedents, isFetching: precedentsLoading } =
     useCandidatePrecedentsQuery(candidateText);
 
+  const { mutateAsync: draftBrief, isPending: drafting } = useDraftBriefMutation();
+  const handleDraftBrief = async () => {
+    if (!active) return;
+    trackUsage('brief_draft');
+    const aspects = rows
+      .filter((row) => row.optionId && row.optionTopic)
+      .map((row) => ({
+        aspect: row.aspectTopic,
+        option: row.optionTopic as string,
+        desc:
+          descriptionById[row.optionId as string] ??
+          descriptionByTopic[row.optionTopic as string] ??
+          '',
+      }));
+    if (aspects.length === 0) return;
+    try {
+      const { brief } = await draftBrief({ aspects });
+      setCandidateBrief(active.id, brief);
+    } catch {
+      // Surfaced by the disabled/spinner state resetting; drafting is optional.
+    }
+  };
+
   const handleExport = () => {
+    trackUsage('export');
     const markdown = buildExplorationMarkdown({
       nodes,
       descriptionByTopic,
@@ -84,6 +133,8 @@ export function CandidatePanel({
       candidates,
       provenance,
       coords,
+      discovered,
+      activeCandidateId,
     });
     downloadTextFile(
       `design-space-exploration-${new Date().toISOString().slice(0, 10)}.md`,
@@ -92,7 +143,7 @@ export function CandidatePanel({
   };
 
   return (
-    <Collapsible defaultOpen={false}>
+    <Collapsible defaultOpen={false} open={open} onOpenChange={onOpenChange}>
       <section className="overflow-hidden rounded-2xl border bg-background/90 shadow-xl backdrop-blur-md">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
@@ -212,6 +263,49 @@ export function CandidatePanel({
                     : 'Fill a slot via "— pick", or select an option and use "Choose" in the Context panel.'}
                 </p>
 
+                {/* The BRIEF — the design's identity layer (Part 10). It drives
+                    the star, the precedents, and the Examine strips; the choices
+                    above remain the commitments it is measured against. */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Brief — what this design is
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleDraftBrief}
+                      disabled={drafting || chosenCount === 0}
+                      className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-violet-700 transition-colors enabled:hover:bg-violet-500/10 disabled:opacity-40"
+                      title={
+                        chosenCount === 0
+                          ? 'Choose at least one option first'
+                          : 'Draft a description from the choices — then edit it'
+                      }
+                    >
+                      {drafting ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-3 w-3" />
+                      )}
+                      Draft from choices
+                    </button>
+                  </div>
+                  <textarea
+                    value={active.brief ?? ''}
+                    onChange={(e) => setCandidateBrief(active.id, e.target.value)}
+                    placeholder="Describe the actual design — what it is, how it works, what people experience. Drafting from your choices gives a starting point."
+                    rows={4}
+                    className="w-full resize-y rounded-md border bg-background px-2 py-1.5 text-[11px] leading-snug placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-violet-400"
+                    aria-label="Candidate brief"
+                  />
+                  {active.brief?.trim() ? (
+                    <p className="text-[10px] leading-snug text-muted-foreground">
+                      The star, precedents, and Examine read this brief; your
+                      choices stay the commitments it is checked against.
+                    </p>
+                  ) : null}
+                </div>
+
                 {/* Closest real precedents to the COMPOSED design */}
                 {candidateText && (
                   <div className="space-y-1">
@@ -257,6 +351,21 @@ export function CandidatePanel({
               >
                 <Focus className="h-3 w-3" />
                 Relevance
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 rounded-full px-3 text-[11px]"
+                onClick={onOpenExamine}
+                disabled={!active}
+                title={
+                  active
+                    ? 'Examine this candidate against your metrics (Perspectives)'
+                    : 'Create a candidate first'
+                }
+              >
+                <SlidersHorizontal className="h-3 w-3" />
+                Examine
               </Button>
               <Button
                 variant="outline"

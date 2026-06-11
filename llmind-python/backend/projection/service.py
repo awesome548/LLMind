@@ -28,6 +28,8 @@ from utils.clients import build_vllm_client
 from utils.modes import BackendMode
 from utils.prompts import GENERATE_AT_PROMPT, GENERATE_AT_PROMPT_VERSION
 from pipeline import projection as proj
+from pipeline import register_alignment as ra
+from backend.corpus.service import SUPPORT_NEIGHBORS, corpus_support
 from backend.corpus.service import load_corpus_vectors as _load_corpus_vectors
 from backend.corpus.service import load_index_meta
 from backend.related_projects.service import (
@@ -40,6 +42,7 @@ from backend.related_projects.service import (
 
 _MODEL_CACHE: Dict[str, Any] = {}
 _SURFACE_CACHE: Dict[str, Any] = {}
+_REGISTER_CACHE: Dict[str, Any] = {}
 
 # The fitted model is a shared cached object and FastAPI runs sync endpoints in a
 # threadpool, so transforms can run concurrently (e.g. the page's /locate and a
@@ -81,6 +84,54 @@ def load_surface() -> Dict[str, Any]:
         _SURFACE_CACHE["surface"] = json.loads(path.read_text(encoding="utf-8"))
         _SURFACE_CACHE["mtime"] = mtime
     return _SURFACE_CACHE["surface"]
+
+
+def _placement_frame() -> tuple[np.ndarray, np.ndarray] | None:
+    """``(corpus_unit, corpus_coords)`` aligned by project id, for
+    evidence-anchored placement (Part 11). ``None`` when the corpus vectors or
+    surface are unavailable — /locate then falls back to the frozen transform.
+    """
+    try:
+        ids, vecs = _load_corpus_vectors()
+        points = load_surface().get("points", [])
+    except ServiceError:
+        return None
+    coord_by_id = {
+        str(p["id"]): [p[a] for a in ("x", "y", "z") if a in p] for p in points
+    }
+    rows = [i for i, pid in enumerate(ids) if pid in coord_by_id]
+    if len(rows) < 2:
+        return None
+    return vecs[rows], np.asarray([coord_by_id[ids[i]] for i in rows], dtype=float)
+
+
+def placement_method() -> str:
+    """Which out-of-sample placement /locate currently uses — logged per
+    generation so drift stays comparable within one placement regime."""
+    return "knn" if _placement_frame() is not None else "umap"
+
+
+def _load_register_map() -> ra.RegisterMap | None:
+    """The fitted short→long register correction, cached by mtime.
+
+    ``None`` when the artifact is absent (run ``database_pipeline.py
+    project-align`` to fit it) — /locate then places raw embeddings.
+    """
+    path = settings.projection_dir / ra.REGISTER_MAP_FILENAME
+    if not path.exists():
+        _REGISTER_CACHE.clear()
+        return None
+    mtime = path.stat().st_mtime
+    if _REGISTER_CACHE.get("mtime") != mtime:
+        _REGISTER_CACHE["map"] = ra.load_register_map(settings.projection_dir)
+        _REGISTER_CACHE["mtime"] = mtime
+    return _REGISTER_CACHE["map"]
+
+
+def register_map_active() -> bool:
+    """Whether /locate currently applies the register correction (logged per
+    generation so variants stay comparable in generate_log.jsonl)."""
+    return settings.register_alignment and _load_register_map() is not None
 
 
 # ── Embedding (local model) ───────────────────────────────────────────────────
@@ -154,10 +205,13 @@ def _placement_confidence(
 def locate_nodes(items: List[Dict[str, str]]) -> List[Dict[str, Any]]:
     """Embed each ``{node_id, text}`` and place it in the frozen design space.
 
-    Returns ``[{node_id, x, y[, z], confidence}]`` aligned to the input order.
-    Items with empty text are skipped. ``confidence`` scores how well the 2D
-    neighbourhood matches the true embedding neighbourhood (see
-    ``_placement_confidence``); ``None`` when unscorable.
+    Returns ``[{node_id, x, y[, z], confidence, clipped, support}]`` aligned to
+    the input order. Items with empty text are skipped. ``confidence`` scores
+    how well the 2D neighbourhood matches the true embedding neighbourhood;
+    ``support`` is the corpus-support percentile (how much corpus evidence
+    exists for this point at all); both ``None`` when unscorable. ``clipped``
+    can only be true on the fallback (no-corpus) transform path — the primary
+    evidence-anchored placement is a convex combination of corpus positions.
     """
     valid = [it for it in items if (it.get("text") or "").strip() and it.get("node_id")]
     if not valid:
@@ -177,20 +231,47 @@ def locate_nodes(items: List[Dict[str, str]]) -> List[Dict[str, Any]]:
             f"VLLM_EMBED_MODEL to the original model."
         )
 
-    with _TRANSFORM_LOCK:
-        coords = model.transform(embeddings)
-    axis_names = ["x", "y", "z"][: model.dims]
-
+    # Unit-normalise once; optionally close the short→long register gap. The
+    # transform, the confidence score, and the support score all consume the
+    # SAME (corrected) vector, so the three signals describe one placement.
     norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
-    confidences = _placement_confidence(embeddings / norms, coords)
+    unit = embeddings / norms
+    rmap = _load_register_map() if settings.register_alignment else None
+    if rmap is not None and rmap.weights.shape[0] == unit.shape[1]:
+        unit = rmap.apply(unit)
+
+    # Evidence-anchored placement (Part 11): the similarity-weighted centroid
+    # of the top-k corpus neighbours' frozen coordinates — the SAME anchors
+    # that drive corpus support and the precedents panel, so position and
+    # evidence tell one story. The frozen UMAP transform (with its soft-clip
+    # band + clipped flag) remains the fallback when the corpus is unavailable.
+    frame = _placement_frame()
+    if frame is not None and frame[0].shape[1] == unit.shape[1]:
+        coords = proj.place_by_neighbors(unit, frame[0], frame[1], k=SUPPORT_NEIGHBORS)
+        clipped = np.zeros(len(coords), dtype=bool)
+    else:
+        with _TRANSFORM_LOCK:
+            coords, clipped = model.transform_with_flags(unit)
+    axis_names = ["x", "y", "z"][: model.dims]
+
+    confidences = _placement_confidence(unit, coords)
+    # Support is read against the SHORT-register baseline when the fitted map
+    # provides one (Part 10 recalibration): node-length texts are compared to
+    # real projects described at node length, not to full descriptions — which
+    # flattened every short text to the 0th percentile.
+    supports = corpus_support(
+        unit, baseline=rmap.support_baseline if rmap is not None else None
+    )
 
     located: List[Dict[str, Any]] = []
-    for it, row, conf in zip(valid, coords, confidences):
+    for it, row, conf, clip, sup in zip(valid, coords, confidences, clipped, supports):
         entry: Dict[str, Any] = {"node_id": it["node_id"]}
         for a, name in enumerate(axis_names):
             entry[name] = float(row[a])
         entry["confidence"] = conf
+        entry["clipped"] = bool(clip)
+        entry["support"] = sup
         located.append(entry)
     return located
 
@@ -438,6 +519,89 @@ def compute_axes(
     }
 
 
+def compute_metrics(
+    *,
+    metrics: List[Dict[str, str]],
+    items: List[Dict[str, str]] | None = None,
+) -> Dict[str, Any]:
+    """N bipolar metrics scored over the corpus and the given items (Part 10 I3).
+
+    Generalises the axes scoring to a metric LIST — the Perspectives strips:
+    ``score_k(v) = cos(v, pole_a_k) − cos(v, pole_b_k)``, min-max normalised over
+    the corpus to [-1, 1]. Returns the FULL corpus score array per metric (the
+    strip's distribution — percentiles are computed client-side from it),
+    clip-flagged item scores, per-metric pole similarity, and the pairwise
+    corpus-score correlation matrix (rubric-redundancy diagnostic).
+    """
+    ids, vecs = _load_corpus_vectors()
+    if not ids:
+        raise ServiceError(
+            "Corpus vectors not found — build the local index with build_local_index.py."
+        )
+    valid_items = [
+        it for it in (items or [])
+        if (it.get("text") or "").strip() and it.get("node_id")
+    ]
+    texts = [t for m in metrics for t in (m["pole_a"], m["pole_b"])]
+    texts += [it["text"] for it in valid_items]
+    embeddings = _embed_texts(texts)
+    if embeddings.shape[1] != vecs.shape[1]:
+        raise ServiceError(
+            f"Embedding dim {embeddings.shape[1]} != corpus dim {vecs.shape[1]} — the "
+            f"runtime embedding model differs from the one the index was built with."
+        )
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    unit = embeddings / norms
+    item_vecs = unit[2 * len(metrics):]
+
+    def _norm(value: float, lo: float, hi: float) -> float:
+        if math.isclose(hi, lo):
+            return 0.0
+        return 2.0 * (value - lo) / (hi - lo) - 1.0
+
+    results: List[Dict[str, Any]] = []
+    raw_rows: List[np.ndarray] = []
+    for k in range(len(metrics)):
+        pole_a, pole_b = unit[2 * k], unit[2 * k + 1]
+        raw = vecs @ pole_a - vecs @ pole_b
+        raw_rows.append(raw)
+        lo, hi = float(raw.min()), float(raw.max())
+        scored_items: List[Dict[str, Any]] = []
+        for it, vec in zip(valid_items, item_vecs):
+            score = _norm(float(vec @ pole_a - vec @ pole_b), lo, hi)
+            scored_items.append(
+                {
+                    "node_id": it["node_id"],
+                    "score": max(-1.0, min(1.0, score)),
+                    "clipped": abs(score) > 1.0,
+                }
+            )
+        results.append(
+            {
+                "corpus": [_norm(float(r), lo, hi) for r in raw],
+                "items": scored_items,
+                "pole_sim": float(pole_a @ pole_b),
+            }
+        )
+
+    # Pairwise corpus-score correlations: |r| near 1 → redundant rubric metrics.
+    corr: List[List[float]] = [[0.0] * len(metrics) for _ in range(len(metrics))]
+    for i in range(len(metrics)):
+        for j in range(len(metrics)):
+            if i == j:
+                corr[i][j] = 1.0
+            elif j > i:
+                a, b = raw_rows[i], raw_rows[j]
+                value = (
+                    float(np.corrcoef(a, b)[0, 1])
+                    if float(a.std()) > 0 and float(b.std()) > 0
+                    else 0.0
+                )
+                corr[i][j] = corr[j][i] = value
+    return {"metrics": results, "corr": corr}
+
+
 def _derive_parent_aspect(
     taxonomy_nodes: List[Dict[str, Any]],
     node_coords: List[Dict[str, Any]],
@@ -498,15 +662,15 @@ def _derive_parent_aspect(
     }
 
 
-def _format_nearby_options(
+def _nearby_options(
     taxonomy_nodes: List[Dict[str, Any]],
     node_coords: List[Dict[str, Any]],
     x: float,
     y: float,
     limit: int = 8,
-) -> str:
-    """Located taxonomy nodes near the click — fed to the prompt as "already
-    explored here, do not duplicate"."""
+) -> List[str]:
+    """Topics of located taxonomy nodes within ``NEARBY_OPTIONS_RADIUS`` of the
+    click, nearest first — the "already explored here" set."""
     by_id = {str(n.get("id")): n for n in taxonomy_nodes if n.get("id")}
     rows: List[tuple[float, str]] = []
     for c in node_coords:
@@ -519,9 +683,46 @@ def _format_nearby_options(
             if topic:
                 rows.append((d, topic))
     rows.sort()
-    if not rows:
+    return [topic for _, topic in rows[:limit]]
+
+
+def _format_nearby_options(
+    taxonomy_nodes: List[Dict[str, Any]],
+    node_coords: List[Dict[str, Any]],
+    x: float,
+    y: float,
+) -> str:
+    """Prompt rendering of ``_nearby_options`` ("do not duplicate" section)."""
+    topics = _nearby_options(taxonomy_nodes, node_coords, x, y)
+    if not topics:
         return "(none yet — this region of the map is unexplored)"
-    return "\n".join(f"- {topic}" for _, topic in rows[:limit])
+    return "\n".join(f"- {topic}" for topic in topics)
+
+
+def peek(
+    *,
+    x: float,
+    y: float,
+    k: int = 5,
+    taxonomy_nodes: List[Dict[str, Any]] | None = None,
+    node_coords: List[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
+    """Gap preview — everything a generation at ``(x, y)`` would be briefed with,
+    WITHOUT calling the LLM (and without the embedding server: seeds come from
+    precomputed corpus vectors).
+
+    ``seed_corpus`` is deterministic for a given click, so a subsequent
+    ``generate_at`` uses exactly the seeds shown here. The preview also names the
+    parent aspect the click would attach new options to (same derivation).
+    """
+    nodes_list = taxonomy_nodes or []
+    coords_list = node_coords or []
+    derived = _derive_parent_aspect(nodes_list, coords_list, x, y)
+    return {
+        "seeds": seed_corpus(x, y, k),
+        "nearby_options": _nearby_options(nodes_list, coords_list, x, y),
+        "parent_aspect": derived["topic"] if derived else None,
+    }
 
 
 def _log_generation(payload: Dict[str, Any]) -> None:
@@ -552,6 +753,7 @@ def generate_at(
     mode: BackendMode | None = None,
     base_url: str | None = None,
     reasoning_effort: str = "medium",
+    brief: str | None = None,
 ) -> Dict[str, Any]:
     """Generate mind-map nodes that fill the gap at a clicked location.
 
@@ -592,7 +794,12 @@ def generate_at(
         base_url=base_url,
         reasoning_effort=reasoning_effort,
         prompt_template=GENERATE_AT_PROMPT,
-        extra_template_fields={"NEARBY_OPTIONS": nearby_options},
+        extra_template_fields={
+            "NEARBY_OPTIONS": nearby_options,
+            # Squiggle hypothesis (Part 10): the designer's work-in-progress
+            # concept conditions gap-filling; logged so the effect is measurable.
+            "DESIGNER_BRIEF": (brief or "").strip() or "(none provided)",
+        },
     )
 
     # Place each generated option by the same text composition the page uses
@@ -613,6 +820,8 @@ def generate_at(
     result["coords"] = located
     result["seed_neighbours"] = neighbours
     result["target"] = {"x": x, "y": y}
+    # Clipped placements are directions, not locations — they are flagged and
+    # excluded from the drift aggregate so the A/B metric stays meaningful.
     drifts: List[float] = []
     for node in result.get("nodes", []):
         coord = coord_by_id.get(node["node_id"])
@@ -621,9 +830,11 @@ def generate_at(
             node["y"] = coord.get("y")
             if "z" in coord:
                 node["z"] = coord["z"]
-            drift = math.hypot(float(node["x"]) - x, float(node["y"]) - y)
-            node["drift"] = drift
-            drifts.append(drift)
+            node["clipped"] = bool(coord.get("clipped", False))
+            node["support"] = coord.get("support")
+            node["drift"] = math.hypot(float(node["x"]) - x, float(node["y"]) - y)
+            if not node["clipped"]:
+                drifts.append(node["drift"])
     result["mean_drift"] = (sum(drifts) / len(drifts)) if drifts else None
 
     _log_generation(
@@ -631,6 +842,11 @@ def generate_at(
             "ts": time.time(),
             "prompt_version": GENERATE_AT_PROMPT_VERSION,
             "seed_strategy": settings.seed_strategy,
+            "register_aligned": register_map_active(),
+            "brief_context": bool((brief or "").strip()),
+            # Drift means different things under different placements — never
+            # aggregate across regimes (Part 11).
+            "placement": placement_method(),
             "target": {"x": x, "y": y},
             "parent_id": result.get("parent_id"),
             "parent_derived": bool(derived),
@@ -642,9 +858,14 @@ def generate_at(
                 {
                     "id": n.get("node_id"),
                     "topic": n.get("topic"),
+                    # The desc is part of the located text — kept so later
+                    # diagnostics can re-embed exactly what was placed.
+                    "desc": n.get("desc"),
                     "x": n.get("x"),
                     "y": n.get("y"),
                     "drift": n.get("drift"),
+                    "clipped": n.get("clipped", False),
+                    "support": n.get("support"),
                 }
                 for n in result.get("nodes", [])
             ],

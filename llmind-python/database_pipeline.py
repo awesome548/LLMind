@@ -55,6 +55,7 @@ from pipeline.ml import (
     umap_reduce,
 )
 from pipeline import projection as proj
+from pipeline import register_alignment as ra
 from pipeline.viz import plot_clusters
 from utils.supabase import (
     fetch_embeddings,
@@ -488,6 +489,55 @@ def project(
         )
 
 
+@app.command("project-log-stats")
+def project_log_stats(
+    log_path: Path = typer.Option(
+        None, "--log", help="generate_log.jsonl (default: <projection dir>/generate_log.jsonl)."
+    ),
+) -> None:
+    """Summarise the generate-at evaluation log by prompt/seeding variant.
+
+    Closes the A/B loop opened by the drift logging: compares mean/median drift
+    (non-clipped nodes) and the clipped rate across ``prompt_version`` ×
+    ``seed_strategy``, so prompt and seeding changes are judged on data.
+    """
+    from pipeline.log_stats import aggregate_generate_log
+
+    resolved = log_path or settings.projection_dir / "generate_log.jsonl"
+    if not resolved.exists():
+        typer.secho(f"No log at {resolved} — run some generate-at calls first.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    rows = [
+        json.loads(line)
+        for line in resolved.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    stats = aggregate_generate_log(rows)
+    if not stats:
+        typer.secho("Log contains no aggregatable rows.", fg=typer.colors.YELLOW)
+        raise typer.Exit(code=0)
+
+    def _fmt(value: float | None, pattern: str = "{:.3f}") -> str:
+        return pattern.format(value) if value is not None else "—"
+
+    typer.secho(
+        f"{'prompt':>6} {'seeding':>9} {'aligned':>8} {'brief':>6} {'placed':>6} {'gens':>5} {'nodes':>6} "
+        f"{'drift_mean':>11} {'drift_med':>10} {'clipped':>8}",
+        fg=typer.colors.BLUE,
+    )
+    for s in stats:
+        typer.echo(
+            f"{str(s['prompt_version']):>6} {str(s['seed_strategy']):>9} "
+            f"{('yes' if s['register_aligned'] else 'no'):>8} "
+            f"{('yes' if s['brief_context'] else 'no'):>6} "
+            f"{s['placement']:>6} "
+            f"{s['generations']:>5} {s['nodes']:>6} "
+            f"{_fmt(s['drift_mean']):>11} {_fmt(s['drift_median']):>10} "
+            f"{_fmt(s['clipped_rate'], '{:.0%}'):>8}"
+        )
+
+
 @app.command("project-calibrate")
 def project_calibrate(
     field: str = typer.Option(
@@ -568,6 +618,285 @@ def project_calibrate(
         else "loose — read node dots as a neighbourhood, not an exact position"
     )
     typer.secho(f"  verdict: {verdict}", fg=typer.colors.GREEN if median <= 2 * cell else typer.colors.YELLOW)
+
+
+def _corpus_pairs_for_alignment(
+    sentences: int, max_chars: int
+) -> tuple[List[str], List[str], np.ndarray, List[int]]:
+    """(ids, short_texts, long_vectors, corpus_rows) for every corpus project
+    with metadata; ``corpus_rows`` are the projects' indices in the full index
+    (for self-exclusion when fitting the support baseline)."""
+    index_path = settings.local_index_path
+    meta_path = Path(f"{index_path}.meta.json")
+    if not index_path.exists() or not meta_path.exists():
+        typer.secho(
+            f"Corpus index or metadata sidecar missing at {index_path}(.meta.json).",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+    data = np.load(index_path, allow_pickle=True)
+    all_ids = [str(i) for i in data["ids"].tolist()]
+    vectors = np.asarray(data["vectors"], dtype=float)
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+    ids: List[str] = []
+    shorts: List[str] = []
+    rows: List[int] = []
+    for row, pid in enumerate(all_ids):
+        record = meta.get(pid) or {}
+        text = ra.build_short_text(
+            record.get("Name") or "",
+            record.get("Descriptions") or "",
+            sentences=sentences,
+            max_chars=max_chars,
+        )
+        if text:
+            ids.append(pid)
+            shorts.append(text)
+            rows.append(row)
+    if not ids:
+        typer.secho("No corpus projects with usable short texts.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    return ids, shorts, vectors[rows], rows
+
+
+def _embed_batched(texts: List[str], batch_size: int) -> np.ndarray:
+    client = build_vllm_client(VLLM_BASE_URL)
+    vectors: List[List[float]] = []
+    for batch in chunked(texts, batch_size):
+        response = client.embeddings.create(model=VLLM_EMBED_MODEL, input=list(batch))
+        vectors.extend(d.embedding for d in response.data)
+    return np.asarray(vectors, dtype=float)
+
+
+@app.command("project-align")
+def project_align(
+    sentences: int = typer.Option(
+        ra.DEFAULT_SHORT_SENTENCES, "--sentences",
+        help="Description sentences in the short-register exemplar.",
+    ),
+    max_chars: int = typer.Option(
+        ra.DEFAULT_SHORT_MAX_CHARS, "--max-chars", help="Short-text length cap."
+    ),
+    folds: int = typer.Option(ra.DEFAULT_FOLDS, "--folds", min=2, help="Cross-validation folds."),
+    batch_size: int = typer.Option(64, "--batch-size", help="Embedding batch size."),
+) -> None:
+    """Fit the short→long register-alignment map from the corpus's own pairs.
+
+    /locate inputs are short "Topic. desc" texts, but the projection was fit on
+    full descriptions — the register gap (ITERATION-PLAN Part 9 H2). This learns
+    an affine correction from each project's (name + first sentences) embedding
+    to its full-text embedding, reports HELD-OUT before/after metrics, and saves
+    ``data/projection/register_map.npz``. Needs the local embedding server.
+    Delete the file or set REGISTER_ALIGNMENT=false to disable at runtime.
+    """
+    ids, shorts, long_vecs, corpus_rows = _corpus_pairs_for_alignment(sentences, max_chars)
+    typer.secho(
+        f"Embedding {len(shorts)} short-register texts with {VLLM_EMBED_MODEL}...",
+        fg=typer.colors.BLUE,
+    )
+    short_vecs = _embed_batched(shorts, batch_size)
+
+    rmap, report = ra.fit_register_map(short_vecs, long_vecs, folds=folds)
+
+    # Short-register support baseline (Part 10 recalibration): what mean-top-k
+    # cosine a REAL project achieves when described at node length. Fitted from
+    # the OUT-OF-FOLD corrected shorts (honest), each excluding its own full
+    # text (runtime queries have no self in the corpus). /locate reads node
+    # support as a percentile of this distribution.
+    from backend.corpus.service import SUPPORT_NEIGHBORS, load_corpus_vectors, support_scores
+
+    corpus_ids, corpus_unit = load_corpus_vectors()
+    rmap.support_baseline = np.sort(
+        support_scores(report["oof_mapped"], corpus_unit, exclude_rows=corpus_rows)
+    )
+    typer.secho(
+        f"Short-register support baseline: mean={rmap.support_baseline.mean():.3f} "
+        f"p5={np.percentile(rmap.support_baseline, 5):.3f} "
+        f"min={rmap.support_baseline.min():.3f}",
+        fg=typer.colors.BLUE,
+    )
+    typer.secho(
+        f"Held-out cosine(short, long) baseline: {report['baseline_cosine']:.3f}",
+        fg=typer.colors.BLUE,
+    )
+    for cand in report["candidates"]:
+        marker = " ←" if cand["kind"] == rmap.meta["kind"] and cand["alpha"] == rmap.meta["alpha"] else ""
+        alpha = f"alpha={cand['alpha']:g}" if cand["alpha"] is not None else "        "
+        typer.echo(f"  {cand['kind']:>11} {alpha:>11}  cv_cosine={cand['cv_cosine']:.3f}{marker}")
+
+    # Held-out effect in the SPACE (the target metric): displacement vs the true
+    # coordinate and clip rate, raw vs out-of-fold-corrected.
+    surface_path = settings.projection_dir / proj.SURFACE_FILENAME
+    if surface_path.exists():
+        surface = json.loads(surface_path.read_text(encoding="utf-8"))
+        true_by_id = {str(p["id"]): (float(p["x"]), float(p["y"])) for p in surface["points"]}
+        model = proj.load_model(settings.projection_dir)
+        keep = [i for i, pid in enumerate(ids) if pid in true_by_id]
+        true_xy = np.array([true_by_id[ids[i]] for i in keep])
+
+        def _eval(vectors: np.ndarray) -> tuple[float, float, float]:
+            coords, clipped = model.transform_with_flags(vectors[keep])
+            disp = np.linalg.norm(coords[:, :2] - true_xy, axis=1)
+            return float(np.mean(disp)), float(np.median(disp)), float(np.mean(clipped))
+
+        raw_mean, raw_med, raw_clip = _eval(short_vecs)
+        oof_mean, oof_med, oof_clip = _eval(report["oof_mapped"])
+        resolution = int(surface.get("grid", {}).get("resolution", proj.DEFAULT_RESOLUTION))
+        cells = 1.0 / resolution
+        typer.secho("Held-out placement vs true coordinates:", fg=typer.colors.BLUE)
+        typer.echo(
+            f"  raw       mean {raw_mean:.4f} ({raw_mean / cells:.1f} cells)  "
+            f"median {raw_med:.4f}  clipped {raw_clip:.0%}"
+        )
+        typer.echo(
+            f"  corrected mean {oof_mean:.4f} ({oof_mean / cells:.1f} cells)  "
+            f"median {oof_med:.4f}  clipped {oof_clip:.0%}"
+        )
+
+        # Part 11: the same held-out round-trips placed by evidence-anchored
+        # kNN (the runtime /locate method) instead of the frozen transform —
+        # the reproducible record behind the placement decision. Self-excluded,
+        # mirroring runtime (queries have no "self" in the corpus).
+        frame_rows = [i for i, pid in enumerate(corpus_ids) if pid in true_by_id]
+        frame_xy = np.array([true_by_id[corpus_ids[i]] for i in frame_rows])
+        frame_pos = {row: j for j, row in enumerate(frame_rows)}
+        knn_coords = proj.place_by_neighbors(
+            report["oof_mapped"][keep],
+            corpus_unit[frame_rows],
+            frame_xy,
+            k=SUPPORT_NEIGHBORS,
+            exclude_rows=[frame_pos[corpus_rows[i]] for i in keep],
+        )
+        knn_disp = np.linalg.norm(knn_coords[:, :2] - true_xy, axis=1)
+        typer.echo(
+            f"  knn (k={SUPPORT_NEIGHBORS}) mean {knn_disp.mean():.4f} "
+            f"({knn_disp.mean() / cells:.1f} cells)  "
+            f"median {np.median(knn_disp):.4f}  clipped 0% (by construction)"
+        )
+
+    path = ra.save_register_map(rmap, settings.projection_dir)
+    typer.secho(
+        f"Saved register map ({rmap.meta['kind']}"
+        + (f", alpha={rmap.meta['alpha']:g}" if rmap.meta["alpha"] is not None else "")
+        + f") -> {path}",
+        fg=typer.colors.GREEN,
+    )
+
+
+@app.command("project-diagnose")
+def project_diagnose(
+    log_path: Path = typer.Option(
+        None, "--log", help="generate_log.jsonl (default: <projection dir>/generate_log.jsonl)."
+    ),
+    offline: bool = typer.Option(
+        False, "--offline", help="Skip the checks that need the embedding server."
+    ),
+    batch_size: int = typer.Option(64, "--batch-size", help="Embedding batch size."),
+) -> None:
+    """Placement-validity diagnostics (ITERATION-PLAN Part 9, reproducible).
+
+    Offline: fit-bounds tightness, corpus round-trip clip rate (must be 0 — any
+    other value means the transform itself is broken), corpus support baseline,
+    register-map status. With the embedding server: re-embeds the generate-log
+    node texts and reports clip rate / top-1 cosine / support percentile, raw
+    vs register-corrected.
+    """
+    from backend.corpus.service import SUPPORT_NEIGHBORS, load_corpus_vectors, support_baseline
+
+    model = proj.load_model(settings.projection_dir)
+    ids, vecs = load_corpus_vectors()
+    if not ids:
+        typer.secho("Corpus vectors not found — build the local index first.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    meta = model.meta
+    typer.secho(
+        f"Model: n={meta.get('n_reference')} input_dims={meta.get('input_dims')} "
+        f"trustworthiness={meta.get('trustworthiness'):.3f} soft_margin={proj.SOFT_MARGIN}",
+        fg=typer.colors.BLUE,
+    )
+
+    surface_path = settings.projection_dir / proj.SURFACE_FILENAME
+    if surface_path.exists():
+        surface = json.loads(surface_path.read_text(encoding="utf-8"))
+        pts = np.array([[p["x"], p["y"]] for p in surface["points"]])
+        for axis, name in enumerate("xy"):
+            lo, hi = np.percentile(pts[:, axis], [5, 95])
+            typer.echo(f"  fit {name}: 5-95 pct span [{lo:.3f}, {hi:.3f}]")
+
+    _, rt_clipped = model.transform_with_flags(vecs)
+    rate = float(rt_clipped.mean())
+    typer.secho(
+        f"  corpus round-trip clip rate: {rt_clipped.sum()}/{len(rt_clipped)} = {rate:.1%}"
+        + ("" if rate == 0 else "  ← transform unfaithful for training data!"),
+        fg=typer.colors.GREEN if rate == 0 else typer.colors.RED,
+    )
+
+    baseline = support_baseline()
+    typer.echo(
+        f"  corpus self-support (top-k cosine): mean={baseline.mean():.3f} "
+        f"p5={np.percentile(baseline, 5):.3f} median={np.median(baseline):.3f}"
+    )
+
+    typer.echo(
+        f"  /locate placement: evidence-anchored knn (k={SUPPORT_NEIGHBORS}; Part 11), "
+        "frozen-transform fallback when corpus/surface artifacts are missing"
+    )
+
+    rmap = ra.load_register_map(settings.projection_dir)
+    if rmap is None:
+        typer.echo("  register map: absent (fit with `project-align`)")
+    else:
+        m = rmap.meta
+        typer.echo(
+            f"  register map: {m.get('kind')} (alpha={m.get('alpha')}) "
+            f"cv_cosine {m.get('baseline_cosine'):.3f} → {m.get('cv_cosine'):.3f}; "
+            f"runtime {'ON' if settings.register_alignment else 'OFF (REGISTER_ALIGNMENT=false)'}"
+        )
+
+    if offline:
+        return
+    resolved = log_path or settings.projection_dir / "generate_log.jsonl"
+    if not resolved.exists():
+        typer.secho(f"No generate log at {resolved} — skipping text re-embedding.", fg=typer.colors.YELLOW)
+        return
+    rows = [json.loads(line) for line in resolved.read_text(encoding="utf-8").splitlines() if line.strip()]
+    nodes = [n for r in rows for n in r.get("nodes", []) if n.get("topic")]
+    if not nodes:
+        typer.secho("Generate log has no nodes.", fg=typer.colors.YELLOW)
+        return
+    # Older rows logged no desc — their texts re-embed shorter than what was
+    # actually located. Stated rather than hidden.
+    with_desc = sum(1 for n in nodes if n.get("desc"))
+    texts = [f"{n['topic']}. {n['desc']}" if n.get("desc") else str(n["topic"]) for n in nodes]
+    typer.secho(
+        f"Re-embedding {len(texts)} generated-node texts ({with_desc} with desc)...",
+        fg=typer.colors.BLUE,
+    )
+    emb = _embed_batched(texts, batch_size)
+    norms = np.linalg.norm(emb, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    unit = emb / norms
+
+    from backend.corpus.service import corpus_support
+
+    def _report(label: str, vectors: np.ndarray, baseline: np.ndarray | None = None) -> None:
+        coords, clipped = model.transform_with_flags(vectors)
+        top1 = (vectors @ vecs.T).max(axis=1)
+        support = [s for s in corpus_support(vectors, baseline=baseline) if s is not None]
+        typer.echo(
+            f"  {label:<10} clip {float(clipped.mean()):>4.0%}   "
+            f"top-1 cosine {float(top1.mean()):.3f}   "
+            f"support pct {float(np.mean(support)):.2f}"
+        )
+
+    typer.secho("Generated-node texts, raw vs register-corrected:", fg=typer.colors.BLUE)
+    _report("raw", unit)
+    if rmap is not None and rmap.weights.shape[0] == unit.shape[1]:
+        # Mirrors the runtime /locate path: corrected vectors read against the
+        # short-register baseline when the fitted map provides one.
+        _report("corrected", rmap.apply(unit), baseline=rmap.support_baseline)
 
 
 if __name__ == "__main__":

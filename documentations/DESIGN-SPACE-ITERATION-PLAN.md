@@ -310,6 +310,19 @@ Reviewed after A–D landed (2026-06-10), with the live stack running.
 
 ---
 
+> **Update (2026-06-11, Iteration G):** shipped per the review's recommended order —
+> **E1** gap preview (`POST /api/projection/peek`, popover with seeds/parent-aspect/nearby
+> before any LLM time; generation commits from the popover), **E2** clipped honesty
+> end-to-end (`transform_with_flags` → `clipped` on locate/generate-at/log → hollow edge
+> markers; clipped excluded from drift aggregates), **E3** choose/reject invariant (store-
+> enforced both directions + UI warning + pick-flow guard), **E4** state GC on tree edits,
+> **E5** exploration stats (UI strip + export + study instrument), **E6** `project-log-stats`
+> CLI (first real reading: 5 gens, drift mean 0.314, **47% clipped rate**), session
+> save/load JSON + usage counters, tree-utils extraction with a 29-test bun suite
+> (backend harness now 45 tests), and the E8 docs refresh. Still open: E7's larger
+> page-hook extraction, a "clear discovered cell" affordance (F9), F2.1, and the pilot
+> study itself.
+
 ## Part 8 — Critical review after Iteration F (2026-06-11)
 
 State at review: A–D + F shipped (lens is now an on/off overlay with a selection/candidate
@@ -425,3 +438,692 @@ Cross-cutting: every perspective declares its own fidelity in the legend (UMAP
 views: trustworthiness; axis views: "exact by construction"); animated dot
 transitions between views; `generate_log.jsonl` gains a `view` field so drift is
 comparable per perspective.
+
+---
+
+## Part 9 — Iteration H: Placement validity (register gap, corpus support, soft margin)
+
+*Added 2026-06-11, after the first real `project-log-stats` reading showed a 47%
+clipped rate among generated ideas.*
+
+### Diagnostics (what was measured before deciding anything)
+
+Three offline/one online checks against the frozen model (`pre_pca=64 → UMAP`,
+209 corpus points, 768-d local embeddings):
+
+| # | Check | Result | Implication |
+|---|---|---|---|
+| 1 | Corpus round-trip through the frozen `.transform()` | **0 / 209 clipped, displacement 0.000** | The transform is faithful for in-distribution inputs; clipping is NOT transform noise |
+| 2 | Bounds tightness (fit coords, 5–95 pct span) | x: [0.13, 0.89], y: [0.06, 0.89] | Bounds are not stretched by outliers — padding them wouldn't help |
+| 3 | Re-embed all 17 logged generated ideas → top-1 cosine to corpus | **0.47–0.65** vs corpus-internal baseline **mean 0.834, p5 0.770** | *Every* generated idea is far out-of-distribution in 768-d |
+| 4 | Same texts: clipped vs in-bounds top-1 cosine | clipped **0.564**, in-bounds **0.587** | The binary `clipped` flag draws a near-arbitrary line — all generated points are equally extrapolated; overshoot beyond the boundary is ≤ ~5% of the span |
+
+**Root cause (register gap):** the corpus was indexed from ~2,700-char project
+descriptions (median 2,645); generated ideas are embedded as ~60–150-char
+"Topic. One-line desc" strings. Short fragments and long documents occupy
+systematically different regions of embedding space — the earlier
+`project-calibrate` run (re-locating corpus projects by Name alone → ~16-cell
+median displacement) measured the same effect from the other side.
+
+**Reframe:** the space cannot be validly "expanded" without data — validity =
+corpus neighbourhood evidence. What we can do: (a) move generated ideas back
+into supported territory (H1, H2), and (b) represent the residual extrapolation
+honestly (H3, H4). Rejected after diagnosis: re-tuning/swapping UMAP (the
+mapping was cleared of blame; a refit breaks the frozen-coordinate invariant),
+fit-time register augmentation (risks register islands), k-NN interpolation
+placement (fabricates interior locations for genuinely novel ideas).
+
+### H1 — Close the register gap at the source (prompt v3)
+
+Generated descs become 2–4 sentences written like a real project description
+(mechanism/material, interaction, audience experience) instead of one line.
+`GENERATE_AT_PROMPT_VERSION` 2 → 3 so `project-log-stats` separates the variants;
+`USER_PROMPT_TEMPLATE` (generate-nodes) gets the same desc register so mind-map
+generated nodes locate identically. Locate text composition stays `topic. desc`.
+Risk: LLM-authored blurbs keep some stylistic signature — H1 narrows, H2 closes.
+
+### H2 — Learned register correction (short → long embedding alignment)
+
+The corpus gives 209 paired examples of the same project in both registers.
+New `pipeline/register_alignment.py`:
+
+- `build_short_text(name, description, sentences, max_chars)` — short-register
+  exemplar mimicking node text ("Name. first sentences of description").
+- `fit_register_map(short, long, alphas, folds)` — candidates: translation
+  (`W=I, b=mean(long−short)`) and closed-form multi-output ridge over an alpha
+  grid; winner picked by k-fold CV mean cosine(mapped, long); refit on all pairs.
+  Held-out 2D metrics per fold (displacement vs true coords, clip rate) are the
+  decision evidence — CV cosine is the generalization number, fold-wise transform
+  the target metric.
+- `RegisterMap.apply(X)` — affine map + re-unit-normalization.
+- Persisted to `data/projection/register_map.npz` (+ meta: scores, alpha, n_pairs).
+
+Runtime: `locate_nodes` applies the map (artifact present AND
+`REGISTER_ALIGNMENT=true`, a new Settings flag defaulting on) right after the
+dim guard; transform, placement confidence, and corpus support all consume the
+corrected vector. Applies to everything `/locate` places (taxonomy nodes,
+generated ideas, candidate stars) — documented boundary: `/axes`, `/relevance`,
+`/similar` stay raw (they compare designer text to the corpus directly).
+`generate_log.jsonl` rows gain `register_aligned` (+ node `desc`, so future
+diagnostics re-embed the true locate text); `aggregate_generate_log` groups by
+(prompt_version, seed_strategy, register_aligned).
+
+CLI `project-align`: embeds the short texts (needs embed server), fits,
+prints held-out before/after (cosine, displacement, clip rate), saves the map.
+Risk: 209 pairs for a 768→768 map → heavy regularization required (the CV grid
+handles it; translation is the safe floor). Risk: over-correcting genuinely
+novel ideas toward the corpus → understating novelty — which is why H3 ships
+alongside.
+
+### H3 — Continuous corpus support replaces the binary honesty signal
+
+Diagnostic #4 shows `clipped` is a near-coin-flip distinction among uniformly
+extrapolated points. The signal that actually varies is 768-d corpus support:
+
+- `backend/corpus/service.py`: cached self-support baseline (per corpus vector,
+  mean top-5 cosine to the rest) + `corpus_support(vecs)` → **percentile of the
+  query's support within the corpus baseline** (0 = below every corpus point,
+  1 = above the median pack). Pure percentile helper unit-tested.
+- `locate_nodes` / `generate-at` nodes / log rows gain `support: float | None`
+  (best-effort, like confidence).
+- UI: node-dot **fill strength** encodes support (washed-out = little corpus
+  evidence); tooltip states it; legend explains. `clipped` remains as geometry
+  (margin band, drift exclusion) but stops pretending to be the honesty signal.
+
+### H4 — Soft margin instead of hard edge pinning
+
+`_normalize` keeps the clipped mask but replaces `np.clip` with an identity-
+inside / tanh-compressed-outside squash (`SOFT_MARGIN = 0.06` ≈ 3 cells at
+R=48): coordinates land in [−0.06, 1.06], preserving direction *and ordering*
+among out-of-hull points instead of stacking them at exactly 0/1 (which also
+manufactured false collision badges). Interior coordinates are bit-identical —
+no refit, saved sessions unaffected; old pinned coords simply sit on the
+boundary line. The margin is served via surface `meta.soft_margin` (injected at
+serve time — no artifact rebuild) and rendered as an explicit **"beyond corpus
+range" band** around the lattice; clipped dots draw at their continuous margin
+position rather than snapping to an edge cell. Distances inside the band are
+not metrically meaningful — the legend says so.
+
+### Validation
+
+- `project-diagnose` CLI (new): reproduces the table above on demand — offline
+  round-trip + bounds + support baseline; with the embed server, re-embeds the
+  generate-log texts and reports clip rate / top-1 cosine / support, raw vs
+  register-corrected. The numbers in this Part were one-off scripts; this makes
+  them regression-checkable.
+- Unit tests: soft-clip (interior identity, margin bounds, ordering, mask),
+  register map (synthetic short/long pairs → mapped closer than raw;
+  persistence round-trip; short-text builder), support percentile, log-stats
+  grouping with `register_aligned`.
+- Manual UI guide: new Iteration H section in DESIGN-SPACE-TESTING.md.
+- Acceptance: held-out clip rate and displacement drop measurably under H2;
+  H1 measured via log-stats v3 rows; no interior coordinate changes; all
+  existing tests stay green.
+
+### Iteration H — measured results (2026-06-11, same day)
+
+All four fixes shipped (H1 prompt v3, H2 `project-align` + runtime correction,
+H3 support score end-to-end, H4 soft margin + band UI). Gates: backend
+harness 63/63, frontend 29/29, tsc/lint clean, zero browser console errors.
+
+**H2 (register alignment), honest reading.** Fit on the corpus's 209
+(name+2-sentences → full-text) pairs, translation won CV (ridge overfits at
+n=209, d=768): held-out cosine 0.905 → 0.928. On held-out corpus short texts:
+displacement 12.3 → 11.9 cells, clip 34% → 35% — i.e. **the correction barely
+moves the 2D outcome for prefix-style texts**, because a description prefix
+already embeds very close to its full text. On the *generated-idea* texts from
+the log it does more: top-1 cosine 0.578 → 0.633, but clip rate unchanged
+(41%) and support percentile 0.00 → 0.00 for the old one-liner texts. The
+register map is kept (it is strictly directionally correct and free at
+runtime), but it is not the main lever.
+
+**H1 (project-style descs) is the lever.** First live v3 generation
+("Content Theme" gap): descs 428–485 chars, support percentiles **0.12 / 0.18
+/ 0.45** — the first generated ideas with non-zero corpus support (old
+one-liner texts: 0.00 across the board) — and clip 1/3. Drift was higher
+(0.508 vs 0.314 historical mean) — one generation, no conclusion;
+`project-log-stats` now separates v3/aligned rows as their own variant
+(`prompt × seeding × aligned`), so the A/B accumulates from here.
+
+**H3/H4 validated in the browser.** A clipped placement rendered at
+cx = −10.06 SVG units — *inside* the band at its continuous position, dashed,
+fill-opacity 0.427 = 0.3 + 0.7·support — instead of pinned at the edge cell
+(which previously also produced false collision badges). Diagnostic #4's
+near-arbitrary binary flag is no longer the honesty signal; support is.
+
+**Standing finding.** Even with both fixes, generated ideas live at the low
+end of corpus support (0.12–0.45 pctile). That is the corpus-ceiling
+measurement (Part 8 W3) made per-node and visible to the designer — the
+quantitative case for corpus expansion when that work is taken up.
+
+Reproduce: `uv run python database_pipeline.py project-diagnose` (add
+`--offline` without the embed server); manual UI checks in
+DESIGN-SPACE-TESTING.md §6.
+
+---
+
+## Part 10 — Iteration I: Briefs make candidates designs; Perspectives becomes the alignment instrument
+
+*Added 2026-06-11, from the purpose clarification of the Perspectives mode (a
+post-candidate examination tool against a focused metric list) and the brief
+proposal that followed. Full argument in PROJECT-REPORT.md §4–5 and the
+conversation record; this Part is the implementation contract.*
+
+### I0 — The dual-layer candidate (the conceptual change)
+
+A candidate stops being a combination and becomes a design with two layers:
+
+| Layer | What it is | Where it comes from |
+|---|---|---|
+| **Brief** (identity) | The designer's own project-style prose: what this design *is* | Written by the designer; LLM-drafted from the choices as a starting point |
+| **Choices** (commitments) | One option per aspect: what this design *commits to* in the constraint structure | The existing composition flow |
+
+Rules that keep the idea honest:
+1. **The brief is the candidate's primary embedding.** It is register-native text
+   (the corpus IS project descriptions — Part 9 measured why this matters), so the
+   star, precedents, and relevance lens all read the brief when present. The
+   composition text survives only as the comparison reference; the two are never
+   concatenated.
+2. **The layers' divergence is a feature, not an error.** Where the brief embeds
+   vs what the choices claim is the central measurement of the revamped
+   Perspectives mode (I3). Nothing silently reconciles them.
+3. **Neither layer may replace the other.** Brief without choices loses the
+   morphological structure (enumerable, comparable, gap-spottable); choices
+   without brief are not a design. The UI treats a candidate as complete when it
+   has both.
+4. **Drafting kills the blank page.** "Draft from choices" asks the LLM to write
+   a project-style description committing to the chosen options; the designer
+   edits. The edit-diff is itself a study signal (what designers change about the
+   machine's synthesis).
+5. **Evidence rules carry over.** Brief placements get support/confidence/margin
+   treatment like every located text. Brief edits move the star; the previous
+   positions persist as a capped trail — the design's trajectory through
+   precedent space (the "evolving, not snapshot" requirement, finally literal).
+
+**The squiggle hypothesis (recorded, deliberately untested):** mixing
+convergence (brief, examination) and divergence (generation, gap-filling) on one
+surface is hypothesized to HELP a modern, rapid-iterating, messy process (design
+squiggle), not harm it. We therefore do NOT build a mode boundary between
+brief-conditioned and brief-free work. Concretely: when a candidate with a brief
+is active, generate-at receives the brief as a context block — and logs
+`brief_context: true` — so the fixation-by-context risk is *measurable* in the
+study rather than designed away in advance.
+
+### I1 — Dual-layer candidates (store + panel + map)
+
+- Store: `brief?: string` per candidate; `appendCandidateTrail` (previous star
+  positions, capped at 10); brief included in the locate signature so editing
+  re-places the star. Session save/load and export carry both layers.
+- Candidate panel: brief textarea + "Draft from choices" (async job, spinner);
+  placement caveats shown for the brief like any node.
+- Map: star at the brief's position; faint trail for the active candidate. NO
+  ghost marker / tether to the composition position on the map — 2-D distance
+  between the layers would imply a measurement the projection cannot honestly
+  make; the divergence lives in Perspectives as true cosine.
+
+### I2 — Backend
+
+| Endpoint | Shape | Notes |
+|---|---|---|
+| `POST /api/candidates/draft-brief` | `{aspects: [{aspect, option, desc}], project_overview?}` → 202 job → `{brief}` | New `DRAFT_BRIEF_PROMPT`, register-matched to Part 9 v3 guidance (concrete nouns, mechanism, experience; 3–5 sentences) |
+| `POST /api/candidates/alignment` | `{brief, composition, aspects: [{aspect_id, chosen: {id,text}, alternatives: [{id,text}]}]}` → `{agreement, per_aspect: [{aspect_id, chosen_score, top_alternative: {id, score}, leans_away}]}` | Sync, one batched embed. `agreement` = cos(brief, composition). `top_alternative` = argmax cos(brief, other options) — the strongest competitor is defined by data, not picked |
+| `POST /api/projection/metrics` | `{metrics: [{pole_a, pole_b}], items}` → per metric: corpus scores (full array), item scores (clip-flagged), `pole_sim`; plus pairwise metric correlations | Generalizes `/axes` (k=2 special case) via a shared bipolar-scoring helper; corpus arrays let the client draw distributions and speak percentiles |
+
+`generate-at` gains optional `brief`; prompt v4 adds a DESIGNER'S CURRENT
+CONCEPT block ("context, not a template — do not restate it"); the log row
+records `brief_context` so log-stats can compare drift/novelty with and without
+concept conditioning.
+
+### I3 — Perspectives revamp (the alignment instrument)
+
+- **Entry through candidates:** an "Examine" action on the candidate panel opens
+  Perspectives pre-loaded with the active candidate. The navigator tab remains
+  but teaches when empty ("Compose a candidate and write its brief — this is
+  where you examine it").
+- **Default representation: metric profile strips** — one horizontal bipolar
+  strip per metric; corpus distribution as a rug/density behind; the candidate's
+  brief as a star on the strip; pole labels; a percentile sentence under each
+  ("more ⟨pole⟩ than NN% of real projects — scaled to this corpus").
+- **Two strip families, one mechanism:**
+  - *Consistency metrics (automatic):* per aspect with a choice, the axis
+    chosen-option ↔ strongest-rejected-alternative; a divergence badge when the
+    brief leans toward the alternative. This is only meaningful because the brief
+    is written independently of the choices (the old composition-based check was
+    partly self-confirming — the composition contains the chosen descs).
+  - *Rubric metrics (persisted):* designer-saved aspect-pole pairs (store slice,
+    GC'd with the tree, carried in sessions) so every candidate is examined
+    against the same project-specific yardstick. Custom free-text criteria are
+    the planned second pass (C2), not in this iteration.
+- **Headline:** brief↔composition agreement + the largest per-aspect divergence.
+- **The 2-D scatter (existing axes view) is demoted to a drill-down tab** for
+  crossing two metrics (quadrant/trade-off reading); its diagnostics (pole
+  similarity, axis correlation) become rubric-quality warnings.
+- **Deferred, recorded:** C2 custom text criteria; E "revise toward pole"
+  (await study evidence that designers iterate candidates); map ghost marker;
+  multimodal briefs (when needed: caption-bridge images into the brief — no
+  geometry change).
+
+### Validation
+- Unit: alignment scoring + top-alternative selection (synthetic vectors),
+  metrics scoring vs axes parity, prompt assembly; store brief/trail/rubric +
+  session round-trip; percentile + consistency-metric builders (pure).
+- Manual guide: DESIGN-SPACE-TESTING.md §7 (brief → draft → examine walkthrough).
+- Study hooks this iteration creates: brief_context A/B in the generate log;
+  draft-vs-edited-brief diffs; trail as a reflection artifact.
+
+### Iteration I — results note (2026-06-11, same day)
+
+Shipped end-to-end: dual-layer candidates (brief textarea + LLM draft-from-
+choices job + brief-first star/precedents/lens + capped trail), the
+`/api/candidates/{draft-brief,alignment}` and `/api/projection/metrics`
+endpoints, prompt v4 with the DESIGNER_BRIEF context block (`brief_context`
+logged; log-stats now groups `prompt × seeding × aligned × brief`), and the
+Perspectives revamp (Examine strips default, scatter demoted to "Cross two
+metrics", persisted rubric with GC + redundancy warnings, entry via the
+candidate panel's Examine button, teaching empty-states).
+
+Gates: backend 76/76, frontend 39/39, tsc/lint clean, zero console errors.
+
+Live walkthrough findings (now in TESTING §7): the drafted brief placed with
+**confidence 0.54** — roughly double the corpus self-confidence mean (0.25),
+live confirmation of the Part 9 premise that register-native prose is what this
+space places well. And the alignment instrument produced a real finding on its
+first run: the LLM'S OWN DRAFT leaned toward "sensor-driven reactive" (86%)
+against the chosen "passive viewing" — the kind of concept↔commitment drift the
+mode exists to catch, caught before any designer saw it.
+
+Open (deferred by plan): C2 custom free-text criteria, E "revise toward pole",
+the map ghost marker, multimodal briefs, and the squiggle-hypothesis A/B —
+which now accumulates data automatically in the generate log.
+
+### Support recalibration addendum (2026-06-12)
+
+A user observation ("many nodes show ~0% corpus support — is this normal?")
+exposed a calibration flaw in H3: the support percentile was read against the
+corpus's FULL-register self-support (mean 0.811, floor 0.721 mean-top-5 cosine)
+— a bar node-length text structurally cannot reach. Measured: even REAL corpus
+projects, described in two sentences, scored mean 11% raw / 31% corrected, and
+"Public plaza/square" (abundant precedent) scored 0%. The number was signalling
+text length, not evidence.
+
+**Fix:** `project-align` now also fits and persists a **short-register support
+baseline** inside `register_map.npz` — the sorted mean-top-k cosines of the
+out-of-fold corrected short corpus texts (each excluding its own full text,
+since runtime queries have no self). `/locate` reads node support as a
+percentile of that distribution; the full-register yardstick remains the
+fallback when no map exists. Support now answers: *"compared to a real project
+described at this length, how much corpus evidence does this idea have?"*
+
+Validated live (one-line option texts, before → after): LED wall panels
+0.33 → **0.84**; Passive viewing 0.10 → **0.45**; Haptic 0.02 → **0.16**;
+Olfactory 0.01 → **0.10**; bare topic-only labels stay 0. One honest nuance:
+pure *siting* statements ("Public plaza/square. The installation is sited in an
+open civic square…") still read low (0.06) — corpus prose centres the artifact,
+so location-context options carry less direct textual evidence than technology
+options. Backend harness: 80 tests green (support_scores self-exclusion,
+baseline persistence + legacy-artifact compatibility, explicit-baseline
+percentiles).
+
+**Follow-up (same day):** the recalibrated values were invisible in the UI at
+first — coords (with their support) persist in localStorage and the locate
+effect only placed nodes *without* coords, so anything located under the old
+calibration never refreshed. The effect now re-locates every node once per
+session (persisted coords still render instantly until the response merges), so
+calibration refits propagate on the next space-view visit. Verified: 33 stale
+zeroed supports refreshed to the live spread (29/33 nonzero, default schema
+mean 18%, LED wall panels 66%, projection mapping 57%) on entering Design Space.
+
+---
+
+## Part 11 — Iteration J: evidence-anchored out-of-sample placement
+
+### J0. Trigger and diagnosis
+
+A user observation exposed a placement contradiction: **"LED wall panels"
+rendered in the "beyond corpus range" band with corpus support 66%** — the map
+said "outside everything we know" while the evidence metric said "one of the
+most precedented ideas on the board". Tracing the point through the pipeline
+showed two distinct flaws, both in how *queries* are placed (the frozen corpus
+layout itself is not implicated):
+
+1. **The geometric band overstates trivial overshoots.** The point's raw UMAP
+   coordinate exceeded the corpus bounding box by **1.7% of the axis range** —
+   a hair past the single most extreme corpus project — yet the binary clip
+   flag gave it the same "beyond corpus range" label a genuine outlier would
+   get.
+2. **`UMAP.transform()` placed it far from its own evidence.** Its top-5
+   corpus neighbours in the original 768-d metric are all real LED-facade
+   projects (Taman Anggrek, Shanghai World Financial Center, Chanel Ginza
+   Tower…) clustering near (0.50, 0.16); the transform placed the query at
+   (0.27, −0.02) — **0.29 normalized units from the centroid of its own
+   precedents**, about a third of the map.
+
+Census over the 26 default-schema options: 7 clipped, of which 1 was a
+high-support contradiction. The decisive measurement used the corpus's own
+short-register round-trips (each project's "Name. first sentences" text,
+register-corrected, placed back into the frozen map, self-excluded — the only
+available ground truth for out-of-sample placement):
+
+| placement method | median disp. | mean | p90 | clip rate |
+|---|---|---|---|---|
+| `UMAP.transform()` (H-era) | 0.182 | 0.247 | 0.514 | **30%** |
+| evidence-weighted kNN (k=5) | **0.147** | **0.165** | **0.285** | 0% |
+| evidence-weighted kNN (k=10) | 0.165 | 0.183 | 0.317 | 0% |
+
+The 30% clip rate on *real corpus projects* round-tripping into their own map
+is the indictment: the geometric "beyond corpus range" channel was mostly
+transform noise, not a novelty signal.
+
+### J1. The faithfulness question (design-decision record)
+
+Earlier iterations declined neighbour-interpolation placement on faithfulness
+grounds. The standard objections, re-examined against the current system:
+
+- **"kNN interpolation cannot extrapolate — it hides genuine novelty."** True
+  by construction: a convex combination of corpus positions can never leave the
+  corpus footprint. But the round-trip numbers show the geometric channel never
+  carried that signal faithfully (30% false positives on in-distribution data),
+  and since Iteration H/Part 10 the system has a *faithful* outsideness channel:
+  corpus support, measured in the original 768-d metric against the
+  short-register baseline. Novelty detection belongs to support (washed-out
+  fill, "thin precedent"), not to 2D geometry. Nothing of value is lost.
+- **"UMAP transform is the principled manifold extension; kNN is a hack."**
+  UMAP has no principled out-of-sample extension. `.transform()` itself
+  initialises new points from their nearest *training-set* neighbours and then
+  runs a few stochastic optimisation epochs — it is a noisy cousin of kNN
+  interpolation, not a faithful manifold map. UMAP's own documentation
+  acknowledges transform placements "concentrated on top of existing classes or
+  spread between them" and points to parametric UMAP or interpolation methods
+  as remedies.
+- **"Disagreeing neighbours produce void placements."** Real and inherent: if
+  the top-5 anchors straddle distinct clusters, the centroid lands between
+  them, in a region belonging to nothing. This is surfaced — not solved — by
+  the existing placement-confidence metric (Jaccard overlap of 768-d vs 2D
+  neighbourhoods), which goes to ~0 exactly in this case and renders the dot
+  dashed ("placement approximate"). UMAP transform has the same pathology with
+  worse tails (p90 0.514 vs 0.285).
+
+Alternatives considered and rejected:
+
+- **Parametric UMAP** (neural encoder): the literature's heavyweight remedy;
+  needs a deep-learning dependency, has ~209 training samples to learn a
+  768→2 map (overfit regime), and refitting relayouts the map (breaks frozen
+  coords + every persisted session). Disproportionate.
+- **KRR / RBF interpolation** (the literature's lightweight remedy): a smooth,
+  global variant of the same idea — measured against kNN during validation
+  (see J4); even where competitive it loses on explainability: 5 nameable
+  anchor projects vs opaque weights over all 209.
+- **Raising the clip threshold / hull test**: cosmetic — LED would still be
+  drawn a third of the map from its precedents.
+- **Refit UMAP with other hyperparameters**: relayouts the frozen space,
+  breaks every persisted coordinate, and no parameter setting fixes
+  `.transform()`'s out-of-sample behaviour.
+
+**Decision: place queries at the similarity-weighted centroid of their top-5
+corpus neighbours' frozen coordinates.** The same five anchors then drive
+position, corpus support, and the precedents panel — one consistent evidence
+story ("placed amid these five projects" becomes a true, clickable statement),
+which is the receipts-not-scores direction of the Part 10 reflection, and
+matches the map's stated epistemics: *relative neighbourhood structure over
+precedent evidence, not absolute coordinates*.
+
+### J2. Design
+
+- `pipeline/projection.py` gains pure `place_by_neighbors(vecs_unit,
+  corpus_unit, corpus_coords, k, exclude_rows=None)`: cosine top-k per query,
+  weights ∝ positive similarity (uniform fallback if degenerate), returns the
+  weighted centroid of the anchors' frozen [0,1] coordinates. `exclude_rows`
+  exists for fit-time diagnostics only (self-exclusion), mirroring
+  `support_scores`.
+- `locate_nodes` places via `place_by_neighbors` with `k = SUPPORT_NEIGHBORS`
+  (deliberately the same k as support) whenever corpus vectors + surface
+  coordinates are available and dimensions match; **falls back to the frozen
+  `UMAP.transform()`** (unchanged semantics, including soft-clip + clipped
+  flag) when they are not. On the kNN path `clipped` is always false.
+- `generate_at` inherits the placement through `locate_nodes`; its log rows
+  gain a `placement` field ("knn" / "umap") and `log-stats` groups by it, so
+  drift statistics are never compared across placement regimes (drift's
+  *meaning* changes: distance from the clicked gap to where the generated
+  idea's evidence lives — bracketing seeds that actually blend should land
+  near the gap; cliché drift snaps to the cliché's cluster, honestly).
+- Placement confidence (Jaccard) is **unchanged** — it is method-agnostic and
+  expected to rise on average, since placement now targets the true
+  neighbourhood directly.
+- The **"beyond corpus range" band retires from the UI** (legend row, band
+  rendering, tooltip phrase, `meta.soft_margin`); outsideness is support's
+  job. The backend keeps `clipped` in the API for the fallback path; the
+  margin/soft-clip machinery stays in `pipeline/projection.py` (fallback +
+  diagnostics baseline).
+- `project-align` reports UMAP-transform vs kNN displacement side by side on
+  the held-out short-register round-trips (the only ground truth), and
+  `project-diagnose` states the active placement method — the decision stays
+  reproducible and revisitable.
+
+### J3. Risks owned
+
+- A query whose neighbours disagree gets a void placement → dashed dot via
+  confidence (existing rendering); accepted over transform noise.
+- Genuinely out-of-domain text is drawn *inside* the map → washed-out fill at
+  ~0 support is the honest signal; the band's geometric claim was less honest.
+- Persisted coords from the transform era remain until re-located → covered by
+  the once-per-session refresh shipped in the Part 10 follow-up.
+
+### J4. Validation (measured, 2026-06-12)
+
+- **Held-out displacement** (`project-align`, OOF-corrected shorts,
+  self-excluded): raw transform mean 0.257 / median 0.182 / clipped 34%;
+  corrected transform mean 0.249 / median 0.179 / clipped 35%; **kNN k=5 mean
+  0.168 (8.0 cells) / median 0.149 / clipped 0%**.
+- **KRR/RBF check** (the literature's lightweight alternative, 5-fold CV over
+  an (alpha, gamma) grid, best picked by displacement): median 0.178 / mean
+  0.190 / p90 0.319 — loses to kNN on every statistic even tuned, and its
+  weights over all 209 projects are unexplainable next to 5 nameable anchors.
+  kNN k=5 settled.
+- **The trigger case, live**: "LED wall panels" now placed at (0.501, 0.158) —
+  the centroid of its five LED-facade precedents — `clipped` false, support
+  66% (unchanged, same anchors). Its confidence stays low (0.11), honestly:
+  the anchors are somewhat spread, so the dot draws dashed. Public plaza
+  (0.544, 0.579) support 12%; olfactory support 1% — washed-out, inside the
+  map, as designed.
+- **Browser**: band, legend entry, and tooltip phrase gone; viewBox back to
+  the unit square; stale transform-era coords (including their `clipped` keys)
+  replaced by the once-per-session relocate on entering Design Space.
+- **Gates**: backend 87/87 (new: 6 `place_by_neighbors` properties, placement
+  log grouping); frontend tsc clean, 39/39 bun tests, eslint 0 errors.
+
+---
+
+## Part 12 — Iteration K: the living schema (PLANNED — awaiting review)
+
+*Status: plan only. Nothing below is implemented. Written 2026-06-12 after
+reviewing six sources against the "one field, three projections, one
+inspector" proposal; the evidence kept the lens architecture but overturned
+its center of gravity.*
+
+### K0. The evidence trail (what each source forces)
+
+| Source | What it contributes | What it corrects in the prior proposal |
+|---|---|---|
+| Halskov & Lundqvist (2021), *Filtering and Informing the Design Space*, TOCHI 28(1) | Informing = establishing/transforming the space; **filtering = extracting a slice for investigation (NOT pruning)**; the two loop at activity scale (Schön's seeing–moving); divergence occurs late (a content tool added 5 new aspects months in); the design-space schema with per-activity dynamics (italics = informed, dashed = filtered) is the analysis instrument | The proposal's instruments are one-way (measure only). The literature's defining dynamic is **filter→inform**: investigation generates new aspects/options. Every instrument needs an informing-back channel |
+| Halskov (2021), *A Media Architecture Design Space: The MAB 2012–2018 Nominees*, MAB '20 | 54 MAB nominees hand-annotated against a faceted schema; per-option instance **counts**; ± faceted search; **option×option cross-tabs whose empty cells are exact, nameable gaps**; granularity principles (avoid options matching ~all or ~1 instance) | The canonical criteria view is the **discrete cross-tab with real projects in cells**, not continuous bipolar axes (those stay as drill-down). The corpus⇄taxonomy bridge is **annotation**, which LLMind can automate |
+| Suh et al. (2024), *Luminate*, CHI '24 | Dimension-driven re-layout validated by users (9/10 divergence support); generate-into-filtered-subspace; user-added dimension retroactively re-annotates all items; semantic zoom; **fade-don't-remove filtering** | Confirms the lens direction; warns that ungrounded LLM dimensions are "syntactically valid but semantically weak" — corpus grounding is the differentiator, never to be traded away |
+| Onarheim & Biskjaer (2013), *An Introduction to 'Creativity Constraints'* | Constraints both restrain and enable; Elster's intrinsic / imposed / **self-imposed**; inverted-U between constrainedness and creativity | Choices, rejections, and briefs ARE self-imposed constraints — name them so in the model. Constrainedness is worth mirroring to the designer, never enforcing |
+| Dalsgaard & Halskov (2012), *Reflective Design Documentation*, DIS '12 | Process capture converts design into knowledge; it dies of documentation burden; reflections attach to events; benefits often deferred to write-up time | LLMind auto-captures what PRT asked humans to type — except the **why**. Add burden-inverted reflection: AI drafts, designer accepts/edits/skips |
+| Dissertation (Uchikoga) | Mind map as bridge between QOC / point-cloud / schema; participant asked for a **table overview** and **rationale**; Luminate critique: scope-grounding + manipulability of dimensions; named future work: temporal layers/replay | The schema table pays the oldest P1 debt; manipulability everywhere; temporal snapshots are in-scope, not exotic |
+
+### K1. The re-centering
+
+**The system's deep model becomes a living design-space schema; every view is
+a lens on it.** Entities (most already exist in the store/logs — this is
+largely a re-description, not a rebuild):
+
+- **Aspects** and **options** — descs, provenance
+  (`taxonomy | generate-at | steer | manual`), state (open / chosen-by /
+  rejected+reason). Choices, rejections, and briefs are *self-imposed
+  constraints* (Elster, via Onarheim & Biskjaer).
+- **Corpus projects** — plus NEW **annotations**: which options each project
+  exemplifies (A2). The discrete bridge between evidence and taxonomy.
+- **Candidates** — constraint bundles (choices) + identity (brief) + trail.
+- **Events** (NEW, lightweight) and **reflections** (NEW) — the process record.
+
+Lenses over this model: **Schema table** (canonical overview — new),
+**Map** (similarity/evidence lens — existing, demoted from protagonist),
+**Cross-tabs** (morphological lens — new, generalizes the axes view),
+**Inspector** (filtering instruments — Examine relocated), **Mind map**
+(structure editing — unchanged until schema-table editing reaches parity).
+
+Standing principles: manipulability everywhere (everything addable /
+renamable / deletable); filtering fades rather than removes (Luminate);
+every instrument can inform back (TOCHI); reflection never blocks (PRT).
+
+### K2. Phase A — the schema spine
+
+**A1. Schema table view.** A new view: aspects as columns, options as cells
+(Halskov's schema form). Styling encodes the model: chosen = ring, rejected =
+struck + dimmed, generated-origin = italic (Halskov's "informed" mark),
+per-option **count badge** from A2. Click = shared selection (receipts appear
+in Related Projects); in-table actions reuse existing store actions (choose /
+reject / reopen / rename / add option = manual informing). Pays the
+dissertation participant's table request verbatim.
+
+**A2. Corpus annotation (the bridge).**
+- `POST /api/corpus/annotate` (202 job): body = the taxonomy; result =
+  `{taxonomy_hash, options: {<option_id>: {count, project_ids}}, diagnostics}`.
+- Pipeline: per option, register-corrected option vector → top-30 corpus
+  shortlist by true cosine; then per project, ONE local-LLM call listing its
+  shortlisted options → membership ids (structured output: `list[str]`, no
+  dict fields — CLAUDE.md schema rules). ≤209 LLM calls, cached as
+  `data/projection/annotations/<taxonomy_hash>.json`; incremental
+  re-annotation by option id on taxonomy edits.
+- Diagnostics per Halskov's granularity principles: `too_broad`
+  (count ≥ ~80% of corpus), `unprecedented` (count ≤ 1 — possibly novel,
+  possibly vague). Badges in the schema table.
+- **This delivers the receipts goal** (PROJECT-REPORT §6 item 5) in
+  categorical form: support becomes a count with a clickable project list;
+  the percentile retreats to diagnostics.
+- Validation gate: ~20 hand-checked (project, option) pairs before trusting
+  the pipeline; the job reports embedding-shortlist vs LLM-verdict agreement.
+
+**A3. Faceted filtering.** Store gains transient
+`facets: {include: Set<optionId>, exclude: Set<optionId>}` (NOT persisted).
+Schema chips and the map respond: non-matching corpus glyphs fade to low
+opacity (never removed — spatial context preserved). Combinable ± exactly as
+in Halskov's tool.
+
+### K3. Phase B — lenses and instruments
+
+**B1. Inspector dock.** The Examine strips render in a right dock inside the
+map view whenever a candidate is selected (same Collapsible / icon-collapse
+grammar as the existing panels). Kills the steering mode ping-pong by
+construction. The Perspectives tab remains as an alias until K5.
+
+**B2. Cross-tab lens.** Pick two aspects → option×option grid; each cell
+shows its annotated projects (count + names, click-through) and any candidate
+whose choices include both options. **Empty cell = exact, nameable gap** →
+"generate into this cell": pole-conditioned generation seeded with the two
+option texts + exemplars from the adjacent half-matching cells; the prompt
+states "no precedent combines A and B". A kept result becomes a **candidate
+skeleton** (choices = {aspectA: optA, aspectB: optB}, brief = generated desc)
+— the morphological-combination→candidate flow. Reuses the generate job
+machinery; logged like generate-at with `cell: [optA, optB]`. The continuous
+axes view remains as the cross-tab's drill-down ("show as continuous
+scatter").
+
+**B3. Steering v1.** `POST /api/candidates/steer` (202 job):
+`{text, mode: 'metric'|'toward'|'away', metric?: {pole_a_text, pole_b_text,
+target_score}, reference?: {text, weight}, preserve: string[]}` →
+`{revised_text, named_qualities: string[], measurement}`.
+- *Strip rails*: drag the star along an Examine strip to a target percentile
+  → revision → ghost shows requested vs achieved (the language-feasibility
+  gap — the steering analog of drift).
+- *Pull-toward-precedent*: from the inspector or a precedent's context menu.
+  Measurement = displacement decomposed into along-direction + orthogonal
+  components (raw cosine space — briefs are long-register).
+- Brief **diff shown for veto before commit** (the peek transparency
+  pattern). Every steer appends a labeled trail segment.
+- `steer_log.jsonl`: `{ts, mode, requested, achieved, along, orthogonal,
+  named_qualities, brief_chars_before, brief_chars_after}` — study fodder.
+- Deltas are **rulers and briefs, never constructors** (Part 11's evidence
+  rule): the LLM makes the move in language; embeddings only measure it.
+
+### K4. Phase C — the loops
+
+**C1. Informing-back (the TOCHI loop).** Uniform channel: any instrument may
+emit *proposals* `{kind: 'option'|'aspect', text, desc, source, evidence}`
+rendered as accept/dismiss chips. v1 emitters: steer's `named_qualities`
+("add 'durational rhythm' under Temporal Strategy?"); alignment's
+uncovered-quality detection ("the brief emphasizes X — no aspect covers it");
+cell generation (kept ideas inform both aspects). Accepted proposals enter
+the taxonomy with provenance `source: 'steer'|'alignment'|'cell'`.
+
+**C2. Reflection capture (PRT, burden-inverted).** On choose, reject (extends
+the existing reason field), steer-commit, candidate-create, and
+generation-keep: the local LLM drafts a ONE-LINE rationale from context,
+prefilled in a small inline input — Enter accepts, typing edits, Esc skips.
+Never modal, never required, drafts generated async. Stored as
+`reflections: Record<eventId, {text, edited, ts}>` (persisted; in session
+files + markdown export). Pays the "why these seven?" debt in both
+directions: the system explains its proposals; the designer's choices carry
+their why.
+
+**C3. Temporal snapshots.** Append-only `events: Array<{ts, kind, refs}>` in
+the store (persisted, capped 500), unifying what is already timestamped
+(provenance.createdAt, trails, usage, logs). The schema table gains a replay
+slider: the space at time t, with Halskov's dynamics styling (what each event
+informed/filtered). Simultaneously the dissertation's named future work,
+PRT's timeline, and the study's richest instrument.
+
+### K5. End state (after A–C land and survive use)
+
+The mode bar becomes a lens bar: **Schema | Map | Cross-tabs** + Mind map
+(retained for tree editing until the schema table reaches editing parity).
+Perspectives dissolves — strips into the Inspector, scatter into the
+cross-tab drill-down. The map is the evidence lens, no longer the thesis.
+
+Optional (decide after real use): a **constrainedness mirror** — a quiet
+header chip ("4/6 aspects locked · 12 rejected") per the inverted-U;
+informative, never enforcing.
+
+### K6. Phasing, gates, and review points
+
+Each phase is independently shippable and reviewed before the next:
+
+| Phase | Contents | Gate |
+|---|---|---|
+| A | A1 schema table, A2 annotation job + receipts, A3 facets | Annotation spot-check passed; schema table drives shared selection; suites green; manual walkthrough added to TESTING §9 |
+| B | B1 inspector dock, B2 cross-tabs + cell generation, B3 steer | Steer measurement pure tests; requested-vs-achieved visible; cell counts = annotation counts; a full examine→steer cycle needs no mode switch |
+| C | C1 proposals, C2 reflections, C3 events + replay | Session round-trip with new slices (defaults-first restore); export contains reflections; replay reproduces a recorded session's schema states |
+
+Implementation-order note: B1 (inspector dock) is the cheapest item in the
+plan and independent of A — it may land first as a quick win; the grouping
+above is thematic, not a strict sequence.
+
+### K7. Risks owned
+
+- **Annotation quality.** LLM membership judgments will be imperfect.
+  Mitigations: receipts always visible (errors inspectable), the spot-check
+  gate precedes trust, counts presented as evidence rather than verdicts.
+  Per-pair manual correction deferred (v2).
+- **Annotation cost.** ≤209 local-LLM calls per fresh taxonomy (minutes,
+  async job, cached by hash, incremental on edits). Acceptable for a research
+  prototype; stated plainly in the UI ("annotating corpus…").
+- **UI density.** Schema + facets + inspector + chips risks the honesty-stack
+  failure mode at interaction level. Mitigations: progressive disclosure
+  along the spine (inspector appears with the first candidate; cross-tabs
+  invite once ≥2 aspects have annotations); per-lens affordance pruning;
+  fade, don't add chrome.
+- **Steering overshoot.** LLMs rewrite more than asked; the
+  requested-vs-achieved gap makes that visible rather than hidden; step-size
+  capping is prompt engineering, iterated on steer_log data.
+- **Scope.** Three phases ≈ three iterations of effort. The study remains the
+  bottleneck for every claim (REPORT §6.2) and MUST NOT wait for C: it can
+  run after B, with A+B as the tested artifact.
+
+### K8. Explicitly deferred
+
+Mind-map dissolution (schema editing parity first); per-annotation manual
+correction; multimodal briefs/images; corpus expansion (after the study, per
+REPORT §6.7); retrieval-path unification (REPORT §6.5 — A2's categorical
+receipts reduce its urgency, but the embedding-side unification still
+stands); semantic zoom on the map (Luminate pattern — nice-to-have, not
+load-bearing).

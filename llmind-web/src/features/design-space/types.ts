@@ -40,6 +40,12 @@ export interface LocatedPoint {
   z?: number;
   /** Jaccard overlap of true vs 2D neighbourhood — how much to trust the position. */
   confidence?: number | null;
+  /** Only meaningful on the backend's no-corpus fallback transform path; the
+   * primary evidence-anchored placement never leaves the corpus footprint. */
+  clipped?: boolean;
+  /** Corpus-support percentile in the ORIGINAL metric — how much corpus evidence
+   * exists for this point, against the corpus's own self-support baseline. */
+  support?: number | null;
 }
 
 export interface LocateResponse {
@@ -59,7 +65,7 @@ export interface SeedNeighbour {
 export interface GeneratedNodeWithCoord {
   node_id: string;
   topic: string;
-  /** One-sentence description — embedded for placement, shown as context. */
+  /** Project-style description (2-4 sentences) — embedded for placement, shown as context. */
   desc?: string;
   parent_node: string;
   x?: number;
@@ -80,10 +86,17 @@ export interface GenerateAtResponse {
   mean_drift?: number | null;
 }
 
-/** node.id → continuous [0,1] coordinate in the frozen design space. */
+/** node.id → continuous coordinate in the frozen design space ([0,1] — placement
+ * is a convex combination of corpus positions, so it never leaves the footprint). */
 export type CoordMap = Record<
   string,
-  { x: number; y: number; z?: number; confidence?: number | null }
+  {
+    x: number;
+    y: number;
+    z?: number;
+    confidence?: number | null;
+    support?: number | null;
+  }
 >;
 
 // ── Semantic-axes perspective (/api/projection/axes) ──────────────────────────
@@ -114,6 +127,46 @@ export interface AxesResponse {
   corpus: AxesPoint[];
   items: AxesItemPoint[];
   meta: AxesMeta;
+}
+
+// ── Candidate alignment (/api/candidates/alignment) ───────────────────────────
+
+export interface AlignmentAspectResult {
+  aspect_id: string;
+  /** cos(brief, chosen option) — how strongly the brief expresses the commitment. */
+  chosen_score: number;
+  /** The competitor the brief is most similar to (null when no alternatives). */
+  top_alternative: { id: string; score: number } | null;
+  /** True when the brief leans toward the alternative over the chosen option. */
+  leans_away: boolean;
+}
+
+export interface AlignmentResponse {
+  /** cos(brief, composition) — overall concept↔commitments agreement. */
+  agreement: number;
+  per_aspect: AlignmentAspectResult[];
+}
+
+// ── Metric strips (/api/projection/metrics) ───────────────────────────────────
+
+export interface MetricItemPoint {
+  node_id: string;
+  score: number;
+  clipped: boolean;
+}
+
+export interface MetricResult {
+  /** Full corpus score distribution in [-1, 1] — rug + percentile basis. */
+  corpus: number[];
+  items: MetricItemPoint[];
+  /** cos(pole_a, pole_b) — near 1.0 means the metric collapses. */
+  pole_sim: number;
+}
+
+export interface MetricsResponse {
+  metrics: MetricResult[];
+  /** Pairwise corpus-score correlations; |r| near 1 → redundant metrics. */
+  corr: number[][];
 }
 
 /** A connector drawn from a generation's clicked cell to the nodes it produced. */

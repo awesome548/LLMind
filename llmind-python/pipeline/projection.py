@@ -35,6 +35,11 @@ DEFAULT_RANDOM_STATE = 42
 DEFAULT_TRUST_NEIGHBORS = 15
 MODEL_FILENAME = "model.joblib"
 SURFACE_FILENAME = "surface.json"
+# Out-of-hull points are squashed into a band this wide OUTSIDE [0, 1] instead of
+# being pinned to the edge (≈3 lattice cells at R=48). Direction and ordering
+# survive. Fallback-path + diagnostics only since Part 11 — the primary
+# evidence-anchored placement cannot leave [0, 1].
+SOFT_MARGIN = 0.06
 
 
 # ── Fitted model ──────────────────────────────────────────────────────────────
@@ -46,8 +51,9 @@ class ProjectionModel:
 
     ``pca`` may be ``None`` when the input dimensionality is already ``<= pre_pca``.
     ``bounds`` are the per-axis (min, max) of the *reference* projection; new points
-    are normalised against these and clipped to ``[0, 1]`` so they never escape the
-    surface even if they land outside the corpus hull.
+    are normalised against these. Points outside the corpus hull are soft-clipped
+    into a ``SOFT_MARGIN`` band around ``[0, 1]`` (and flagged) rather than pinned
+    to the edge, so direction and ordering survive.
     """
 
     reducer: Any                       # fitted umap.UMAP
@@ -56,7 +62,7 @@ class ProjectionModel:
     dims: int
     meta: Dict[str, Any] = field(default_factory=dict)
     # Inputs are L2-normalised before reduction (Euclidean on unit vectors ≈
-    # cosine) — this also makes UMAP.inverse_transform well-defined.
+    # cosine).
     normalized: bool = True
 
     def _prep(self, arr: np.ndarray) -> np.ndarray:
@@ -68,6 +74,19 @@ class ProjectionModel:
 
     def transform(self, X: np.ndarray | Sequence[Sequence[float]]) -> np.ndarray:
         """Map raw high-dim embeddings into the frozen, [0, 1]-normalised space."""
+        coords, _ = self.transform_with_flags(X)
+        return coords
+
+    def transform_with_flags(
+        self, X: np.ndarray | Sequence[Sequence[float]]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """``transform`` plus a per-point boolean mask of points that fell OUTSIDE
+        the reference bounds and were soft-clipped into the margin band.
+
+        A clipped point's position is an extrapolation, not corpus-supported.
+        Used by the no-corpus fallback path and by diagnostics (`project-align`
+        round-trips) — runtime placement is ``place_by_neighbors``.
+        """
         arr = np.asarray(X, dtype=float)
         if arr.ndim == 1:
             arr = arr.reshape(1, -1)
@@ -78,34 +97,73 @@ class ProjectionModel:
             coords = np.asarray(self.reducer.transform(reduced), dtype=float)
         return self._normalize(coords)
 
-    def invert(self, point: Sequence[float]) -> np.ndarray:
-        """Approximate the high-dim (unit) vector that lives at a [0,1] surface point.
+    def _normalize(self, coords: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Normalise to [0, 1] against the fit bounds; also return the per-point
+        mask of coordinates that fell outside (out-of-hull points).
 
-        The inverse of the projection: ``[0,1]`` coords → raw UMAP coords (via the
-        stored bounds) → ``UMAP.inverse_transform`` → ``PCA.inverse_transform`` →
-        a unit vector in the original embedding space. Lets a clicked *location* be
-        turned back into "what concept belongs here" for faithful seeding.
+        Inside [0, 1] the mapping is the identity. Outside, the overshoot is
+        tanh-compressed into ``(0, SOFT_MARGIN)`` so out-of-hull points keep
+        their direction and relative ordering instead of stacking at the edge.
         """
-        raw = np.empty((1, self.dims), dtype=float)
-        for axis in range(self.dims):
-            lo, hi = self.bounds[axis]
-            raw[0, axis] = lo + float(point[axis]) * (hi - lo)
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore")
-            reduced = np.asarray(self.reducer.inverse_transform(raw), dtype=float)
-        vec = self.pca.inverse_transform(reduced) if self.pca is not None else reduced
-        v = np.asarray(vec, dtype=float).reshape(-1)
-        norm = float(np.linalg.norm(v))
-        return v / norm if norm > 0 else v
-
-    def _normalize(self, coords: np.ndarray) -> np.ndarray:
         out = np.empty_like(coords, dtype=float)
         for axis, (lo, hi) in enumerate(self.bounds):
             if math.isclose(hi, lo):
                 out[:, axis] = 0.5
             else:
                 out[:, axis] = (coords[:, axis] - lo) / (hi - lo)
-        return np.clip(out, 0.0, 1.0)
+        clipped = ((out < 0.0) | (out > 1.0)).any(axis=1)
+        return _soft_clip(out, SOFT_MARGIN), clipped
+
+
+def _soft_clip(values: np.ndarray, margin: float) -> np.ndarray:
+    """Identity inside [0, 1]; tanh-compressed overshoot outside, asymptoting at
+    ``±margin``. Monotonic, so out-of-hull ordering is preserved."""
+    out = np.asarray(values, dtype=float).copy()
+    under = out < 0.0
+    over = out > 1.0
+    out[under] = -margin * np.tanh(-out[under] / margin)
+    out[over] = 1.0 + margin * np.tanh((out[over] - 1.0) / margin)
+    return out
+
+
+# ── Out-of-sample placement (evidence-anchored, Part 11) ─────────────────────
+
+
+def place_by_neighbors(
+    vecs_unit: np.ndarray,
+    corpus_unit: np.ndarray,
+    corpus_coords: np.ndarray,
+    k: int,
+    exclude_rows: Sequence[int] | None = None,
+) -> np.ndarray:
+    """Place each query at the similarity-weighted centroid of its top-``k``
+    corpus neighbours' frozen coordinates.
+
+    UMAP has no principled out-of-sample extension — ``.transform()`` is itself
+    neighbour-anchored plus stochastic optimisation, and on corpus round-trips
+    it displaced points further than this interpolation on every statistic
+    (ITERATION-PLAN Part 11). A convex combination of precedents' positions
+    cannot leave the corpus footprint by construction; outsideness is corpus
+    support's job (768-d, faithful), not the 2D layout's.
+
+    Weights ∝ positive cosine similarity (uniform when degenerate).
+    ``exclude_rows`` masks one corpus row per query — fit-time diagnostics
+    only, mirroring ``support_scores`` (runtime queries have no "self").
+    """
+    sims = np.asarray(vecs_unit, dtype=float) @ np.asarray(corpus_unit, dtype=float).T
+    if exclude_rows is not None:
+        for i, row in enumerate(exclude_rows):
+            sims[i, row] = -np.inf
+    coords = np.asarray(corpus_coords, dtype=float)
+    k = max(1, min(k, sims.shape[1] - (1 if exclude_rows is not None else 0)))
+    out = np.empty((sims.shape[0], coords.shape[1]), dtype=float)
+    for i, row in enumerate(sims):
+        top = np.argsort(row)[-k:]
+        weights = np.clip(row[top], 0.0, None)
+        total = weights.sum()
+        weights = weights / total if total > 0 else np.full(k, 1.0 / k)
+        out[i] = (coords[top] * weights[:, None]).sum(axis=0)
+    return out
 
 
 # ── Fitting ─────────────────────────────────────────────────────────────────
@@ -123,10 +181,11 @@ def fit_projection(
     """Fit PCA → UMAP on the L2-normalised reference corpus and record [0,1] bounds.
 
     Vectors are unit-normalised and UMAP uses the Euclidean metric — equivalent to
-    cosine on unit vectors, but (unlike cosine) it makes ``inverse_transform`` valid,
-    so a surface location can be inverted back to an embedding for faithful seeding.
-    The returned model's ``transform`` reproduces these coordinates for the same
-    inputs and places new inputs consistently in the same frame.
+    cosine on unit vectors. The returned model's ``transform`` reproduces these
+    coordinates for the same inputs and places new inputs consistently in the same
+    frame (runtime /locate placement is evidence-anchored instead — see
+    ``place_by_neighbors``; ``transform`` is the no-corpus fallback and the
+    diagnostics baseline).
     """
     import umap  # type: ignore
 
@@ -251,7 +310,8 @@ def nearest_indices(points_xy: np.ndarray, query_xy: Sequence[float], k: int) ->
     """Indices of the ``k`` corpus points nearest a location, by Euclidean 2D/3D distance.
 
     Distance is in the projected space — a presentation-faithful seed for "what is
-    around this spot", not a claim about the original metric (see DESIGN-SPACE-VIZ.md §3.3).
+    around this spot", not a claim about the original metric (see
+    documentations/DESIGN-SPACE-VIZ.md §3.3).
     """
     if points_xy.shape[0] == 0 or k <= 0:
         return []

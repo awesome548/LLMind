@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # (cluster around the single nearest project). Kept switchable for A/B
     # comparison via data/projection/generate_log.jsonl.
     seed_strategy: str = "bracket"
+    # Apply the learned short→long register correction to /locate embeddings
+    # (requires data/projection/register_map.npz, fit with `project-align`).
+    # Switchable for A/B comparison; rows in generate_log.jsonl record it.
+    register_alignment: bool = True
 
     # ── Scraper ───────────────────────────────────────────────────────────────
     base_url: str = "https://awards.mediaarchitecture.org"

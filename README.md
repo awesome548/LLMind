@@ -8,7 +8,11 @@ Monorepo with two independent subsystems (see `CLAUDE.md` for the hub):
 - **Backend (`llmind-python/`):** FastAPI, managed with `uv`. Generates structured taxonomies via OpenAI-compatible structured output and serves related-project retrieval. Runs fully local (LM Studio / vLLM for chat + embeddings) or against OpenAI + Supabase. See `llmind-python/BACKEND.md`.
 - **AI workflow:** the active mind-map branch + lineage is formatted into prompt templates and sent to the chat model to propose new nodes; structured JSON is parsed back into the node tree.
 - **Project retrieval:** query embeddings fetch related project metadata via Supabase pgvector or an offline `.npz` index, surfaced beside the map.
-- **Design-space pipeline:** `database_pipeline.py` scrapes, embeds, clusters, and fits a frozen UMAP projection of the corpus; `generate_taxonomy.py` serializes taxonomies. See `DESIGN-SPACE-VIZ.md` and `DESIGN-SPACE-TESTING.md`.
+- **Design-space pipeline:** `database_pipeline.py` scrapes, embeds, clusters, and fits a frozen UMAP projection of the corpus; `generate_taxonomy.py` serializes taxonomies. See `documentations/DESIGN-SPACE-VIZ.md` and `documentations/DESIGN-SPACE-TESTING.md`.
+
+For the unified overview — what the system is, how each feature serves the design
+process, and the critical reflection on where it stands — read **`PROJECT-REPORT.md`**.
+All historical design/iteration documents live in `documentations/`.
 
 ## Run locally
 

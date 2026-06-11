@@ -146,6 +146,9 @@ function ProjectDetail({ project }: ProjectDetailProps) {
     <div className="space-y-3">
       <h3 className="font-semibold leading-tight">{project.name}</h3>
       {project.imageUrl ? (
+        // Corpus images come from arbitrary external hosts; next/image would
+        // require a remotePatterns allowlist per CDN — no value for a local tool.
+        // eslint-disable-next-line @next/next/no-img-element
         <img
           key={project.imageUrl}
           src={project.imageUrl}
@@ -190,15 +193,21 @@ export function SimpleProjectPanel({
     : (items[0]?.id ?? null);
   const selectedProject = items.find((item) => item.id === activeId) ?? null;
 
+  // Each column caps its own height and scrolls independently — the height
+  // bound must live on the scrollable element itself (a min-h/flex-1 parent
+  // grows to content, so the columns would never clip). Kept just under the
+  // viewport so the floating panel stays above the bottom bar.
+  const columnScroll = 'max-h-[calc(100dvh-14rem)] overflow-y-auto';
+
   return (
-    <div className="flex min-h-[520px] flex-col overflow-hidden rounded-xl border bg-card">
+    <div className="flex flex-col overflow-hidden rounded-xl border bg-card">
       <div className="border-b px-4 py-3">
         <p className="text-sm font-semibold">Related Projects</p>
       </div>
 
-      <div className="grid flex-1 grid-cols-[minmax(0,2fr)_minmax(0,3fr)] divide-x overflow-hidden">
+      <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] divide-x overflow-hidden">
         {/* List */}
-        <div className="overflow-y-auto p-3">
+        <div className={cn(columnScroll, 'p-3')}>
           {isLoading ? (
             <Skeleton />
           ) : (
@@ -207,7 +216,7 @@ export function SimpleProjectPanel({
         </div>
 
         {/* Detail */}
-        <div className="overflow-y-auto p-4">
+        <div className={cn(columnScroll, 'p-4')}>
           {isLoading ? (
             <div className="space-y-3 animate-pulse">
               <div className="h-5 w-2/3 rounded bg-muted" />

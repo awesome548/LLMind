@@ -101,6 +101,71 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projection/peek": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Peek
+         * @description Gap preview (no LLM, no embedding server): the deterministic seed set a
+         *     generate-at would use, nearby already-explored ideas, and the parent aspect
+         *     the click would attach to.
+         */
+        post: operations["peek_api_projection_peek_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projection/axes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Axes
+         * @description Exact bipolar coordinates for the semantic-axes perspective: every corpus
+         *     project (and any taxonomy/candidate items) scored against two designer-chosen
+         *     pole pairs in the original embedding metric.
+         */
+        post: operations["axes_api_projection_axes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projection/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Metrics
+         * @description Score the corpus + items along a list of bipolar metrics — the data
+         *     behind the Perspectives profile strips (exact cosine, no projection).
+         */
+        post: operations["metrics_api_projection_metrics_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projection/generate-at": {
         parameters: {
             query?: never;
@@ -147,6 +212,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/corpus/relevance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Relevance
+         * @description True cosine similarity of every corpus project to a text — powers the
+         *     design-space relevance lens (scores-only; min/max included so the client
+         *     can normalise and label the painting as RELATIVE relevance).
+         */
+        post: operations["post_relevance_api_corpus_relevance_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/corpus/projects/{project_id}": {
         parameters: {
             query?: never;
@@ -161,6 +248,50 @@ export interface paths {
         get: operations["get_corpus_project_api_corpus_projects__project_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/candidates/draft-brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Draft Brief
+         * @description Draft the candidate's brief from its committed choices (LLM — async job).
+         *
+         *     Returns ``{job_id}``; poll ``GET /api/jobs/{job_id}``. The result is
+         *     ``{brief}`` — a starting point the designer edits, never the final word.
+         */
+        post: operations["draft_brief_api_candidates_draft_brief_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/candidates/alignment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Alignment
+         * @description Measure how the candidate's brief (identity) and choices (commitments)
+         *     agree — overall and per aspect — in the original embedding metric.
+         */
+        post: operations["alignment_api_candidates_alignment_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -208,6 +339,57 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AlignmentAspect */
+        AlignmentAspect: {
+            /** Aspect Id */
+            aspect_id: string;
+            chosen: components["schemas"]["AlignmentOption"];
+            /** Alternatives */
+            alternatives?: components["schemas"]["AlignmentOption"][];
+        };
+        /** AlignmentAspectResult */
+        AlignmentAspectResult: {
+            /** Aspect Id */
+            aspect_id: string;
+            /** Chosen Score */
+            chosen_score: number;
+            top_alternative?: components["schemas"]["AlignmentTopAlternative"] | null;
+            /** Leans Away */
+            leans_away: boolean;
+        };
+        /** AlignmentOption */
+        AlignmentOption: {
+            /** Id */
+            id: string;
+            /** Text */
+            text: string;
+        };
+        /**
+         * AlignmentRequest
+         * @description The candidate's two layers + the per-aspect option field to score against.
+         */
+        AlignmentRequest: {
+            /** Brief */
+            brief: string;
+            /** Composition */
+            composition: string;
+            /** Aspects */
+            aspects?: components["schemas"]["AlignmentAspect"][];
+        };
+        /** AlignmentResponse */
+        AlignmentResponse: {
+            /** Agreement */
+            agreement: number;
+            /** Per Aspect */
+            per_aspect?: components["schemas"]["AlignmentAspectResult"][];
+        };
+        /** AlignmentTopAlternative */
+        AlignmentTopAlternative: {
+            /** Id */
+            id: string;
+            /** Score */
+            score: number;
+        };
         /** AspectResponse */
         AspectResponse: {
             /** Name */
@@ -216,6 +398,67 @@ export interface components {
             desc: string;
             /** Options */
             options?: components["schemas"]["OptionResponse"][];
+        };
+        /** AxesItem */
+        AxesItem: {
+            /** Node Id */
+            node_id: string;
+            /** Text */
+            text: string;
+        };
+        /** AxesItemPoint */
+        AxesItemPoint: {
+            /** Node Id */
+            node_id: string;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Clipped */
+            clipped: boolean;
+        };
+        /** AxesMeta */
+        AxesMeta: {
+            /** X Pole Sim */
+            x_pole_sim: number;
+            /** Y Pole Sim */
+            y_pole_sim: number;
+            /** Axis Corr */
+            axis_corr: number;
+        };
+        /** AxesPoint */
+        AxesPoint: {
+            /** Id */
+            id: string;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /** AxesRequest */
+        AxesRequest: {
+            x: components["schemas"]["AxisSpec"];
+            y: components["schemas"]["AxisSpec"];
+            /** Items */
+            items?: components["schemas"]["AxesItem"][];
+        };
+        /** AxesResponse */
+        AxesResponse: {
+            /** Corpus */
+            corpus?: components["schemas"]["AxesPoint"][];
+            /** Items */
+            items?: components["schemas"]["AxesItemPoint"][];
+            meta: components["schemas"]["AxesMeta"];
+        };
+        /** AxisPole */
+        AxisPole: {
+            /** Text */
+            text: string;
+        };
+        /** AxisSpec */
+        AxisSpec: {
+            pole_a: components["schemas"]["AxisPole"];
+            pole_b: components["schemas"]["AxisPole"];
         };
         /**
          * BackendMode
@@ -241,6 +484,29 @@ export interface components {
             Details: string;
             /** Image */
             Image?: string | null;
+        };
+        /** DraftBriefAspect */
+        DraftBriefAspect: {
+            /** Aspect */
+            aspect: string;
+            /** Option */
+            option: string;
+            /**
+             * Desc
+             * @default
+             */
+            desc: string;
+        };
+        /** DraftBriefRequest */
+        DraftBriefRequest: {
+            /** Aspects */
+            aspects: components["schemas"]["DraftBriefAspect"][];
+            /**
+             * Project Overview
+             * @default
+             */
+            project_overview: string;
+            mode?: components["schemas"]["BackendMode"] | null;
         };
         /** FetchRelatedProjectsRequest */
         FetchRelatedProjectsRequest: {
@@ -309,6 +575,8 @@ export interface components {
              * @default medium
              */
             reasoning_effort: string;
+            /** Brief */
+            brief?: string | null;
         };
         /** GenerateNodesRequest */
         GenerateNodesRequest: {
@@ -401,6 +669,53 @@ export interface components {
             z?: number | null;
             /** Confidence */
             confidence?: number | null;
+            /**
+             * Clipped
+             * @default false
+             */
+            clipped: boolean;
+            /** Support */
+            support?: number | null;
+        };
+        /** MetricItemPoint */
+        MetricItemPoint: {
+            /** Node Id */
+            node_id: string;
+            /** Score */
+            score: number;
+            /** Clipped */
+            clipped: boolean;
+        };
+        /** MetricResult */
+        MetricResult: {
+            /** Corpus */
+            corpus: number[];
+            /** Items */
+            items?: components["schemas"]["MetricItemPoint"][];
+            /** Pole Sim */
+            pole_sim: number;
+        };
+        /** MetricSpec */
+        MetricSpec: {
+            pole_a: components["schemas"]["AxisPole"];
+            pole_b: components["schemas"]["AxisPole"];
+        };
+        /**
+         * MetricsRequest
+         * @description A LIST of bipolar metrics — the Perspectives strips (generalises /axes).
+         */
+        MetricsRequest: {
+            /** Metrics */
+            metrics: components["schemas"]["MetricSpec"][];
+            /** Items */
+            items?: components["schemas"]["AxesItem"][];
+        };
+        /** MetricsResponse */
+        MetricsResponse: {
+            /** Metrics */
+            metrics: components["schemas"]["MetricResult"][];
+            /** Corr */
+            corr: number[][];
         };
         /**
          * NodeCoordInput
@@ -422,6 +737,51 @@ export interface components {
             /** Desc */
             desc: string;
         };
+        /** PeekRequest */
+        PeekRequest: {
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /**
+             * K
+             * @default 5
+             */
+            k: number;
+            /** Taxonomy Nodes */
+            taxonomy_nodes?: components["schemas"]["backend__projection__router__TaxonomyNodeInput"][];
+            /** Coords */
+            coords?: components["schemas"]["NodeCoordInput"][];
+        };
+        /**
+         * PeekResponse
+         * @description What a generation at this location would be briefed with — shown to the
+         *     designer BEFORE any LLM time is spent.
+         */
+        PeekResponse: {
+            /** Seeds */
+            seeds?: components["schemas"]["PeekSeed"][];
+            /** Nearby Options */
+            nearby_options?: string[];
+            /** Parent Aspect */
+            parent_aspect?: string | null;
+        };
+        /** PeekSeed */
+        PeekSeed: {
+            /** Id */
+            id?: string | null;
+            /** Name */
+            Name: string;
+            /**
+             * Descriptions
+             * @default
+             */
+            Descriptions: string;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
         /** RelatedProject */
         RelatedProject: {
             /** Id */
@@ -442,6 +802,27 @@ export interface components {
             Details: string;
             /** Image */
             Image?: string | null;
+        };
+        /** RelevanceRequest */
+        RelevanceRequest: {
+            /** Text */
+            text: string;
+        };
+        /** RelevanceResponse */
+        RelevanceResponse: {
+            /** Scores */
+            scores?: components["schemas"]["RelevanceScore"][];
+            /** Min */
+            min: number;
+            /** Max */
+            max: number;
+        };
+        /** RelevanceScore */
+        RelevanceScore: {
+            /** Id */
+            id: string;
+            /** Score */
+            score: number;
         };
         /** SimilarProject */
         SimilarProject: {
@@ -722,6 +1103,105 @@ export interface operations {
             };
         };
     };
+    peek_api_projection_peek_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PeekRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PeekResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    axes_api_projection_axes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AxesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AxesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    metrics_api_projection_metrics_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetricsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     generate_at_api_projection_generate_at_post: {
         parameters: {
             query?: never;
@@ -790,6 +1270,39 @@ export interface operations {
             };
         };
     };
+    post_relevance_api_corpus_relevance_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RelevanceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelevanceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_corpus_project_api_corpus_projects__project_id__get: {
         parameters: {
             query?: never;
@@ -808,6 +1321,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CorpusProjectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    draft_brief_api_candidates_draft_brief_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftBriefRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    alignment_api_candidates_alignment_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlignmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlignmentResponse"];
                 };
             };
             /** @description Validation Error */

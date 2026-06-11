@@ -4,14 +4,18 @@ import {
   ChevronRight,
   Compass,
   Focus,
+  FolderOpen,
   Grid3x3,
   Home,
   Info,
   Loader2,
   Network,
   PanelsRightBottom,
+  Save,
   Sparkles,
+  Star,
   Zap,
+  type LucideIcon,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -26,12 +30,12 @@ import {
 import { useGenerateAtMutation } from '@/src/features/design-space/hooks/use-generate-at-mutation';
 import { useCorpusProjectQuery } from '@/src/features/design-space/hooks/use-corpus-project';
 import { useRelevanceQuery } from '@/src/features/design-space/hooks/use-relevance-query';
-import { AxesView } from '@/src/components/design-space/axes-view';
+import { ExamineView } from '@/src/components/design-space/examine-view';
 import { CandidatePanel } from '@/src/components/design-space/candidate-panel';
 import { CompareCandidatesDialog } from '@/src/components/design-space/compare-candidates-dialog';
 import {
   candidateCoordKey,
-  composeCandidateText,
+  candidateEmbeddingText,
   indexNodesById,
 } from '@/src/features/design-space/candidate-utils';
 import type { CandidateMarker } from '@/src/components/design-space/design-space-surface';
@@ -59,6 +63,21 @@ import type {
   MindmapSelection,
   NodeProvenance,
 } from '@/src/features/mindmap/types';
+import {
+  collectIds,
+  ensureUniqueChildIds,
+  findNodeByLineage,
+  insertChildrenAtNode,
+} from '@/src/features/mindmap/tree-utils';
+import { usePeekMutation } from '@/src/features/design-space/hooks/use-peek-mutation';
+import type { GapPreview } from '@/src/components/design-space/design-space-surface';
+import {
+  computeExplorationStats,
+  formatExplorationStats,
+} from '@/src/features/design-space/exploration-stats';
+import { buildSessionFile, parseSessionFile } from '@/src/lib/session-io';
+import { downloadTextFile } from '@/src/lib/export-exploration';
+import { selectSessionSnapshot } from '@/src/store/mindmap-store';
 import { GenerateTaxonomyDialog } from '@/src/features/mindmap/components/generate-taxonomy-dialog';
 import { GenerateNodesDialog } from '@/src/features/mindmap/components/generate-nodes-dialog';
 import type { GenerateNodesParams } from '@/src/features/mindmap/hooks/use-generate-nodes-mutation';
@@ -71,11 +90,6 @@ const INITIAL_SELECTION: MindmapSelection = {
   topic: INITIAL_TOPIC,
   lineage: [INITIAL_TOPIC],
 };
-
-interface TreeUpdateResult {
-  nodes: ReadonlyArray<MindmapNode>;
-  inserted: boolean;
-}
 
 const buildRequest = (
   selection: MindmapSelection,
@@ -105,96 +119,27 @@ function toSeedProjects(rows: unknown): NodeProvenance['seedProjects'] {
     .filter((seed) => seed.name !== PLACEHOLDER_PROJECT_NAME);
 }
 
-function findNodeByLineage(
-  nodes: ReadonlyArray<MindmapNode>,
-  lineage: ReadonlyArray<string>
-): MindmapNode | null {
-  let currentNodes = nodes;
-  let currentNode: MindmapNode | undefined;
-
-  for (const topic of lineage) {
-    currentNode = currentNodes.find((node) => node.topic === topic);
-    if (!currentNode) {
-      return null;
-    }
-    currentNodes = currentNode.children ?? [];
-  }
-
-  return currentNode ?? null;
-}
-
-function insertChildrenAtNode(
-  nodes: ReadonlyArray<MindmapNode>,
-  parentId: string,
-  childrenToInsert: ReadonlyArray<MindmapNode>
-): TreeUpdateResult {
-  let inserted = false;
-  const nextNodes = nodes.map((node) => {
-    if (node.id === parentId) {
-      inserted = true;
-      const existingChildren = node.children ?? [];
-      const existingIds = new Set(existingChildren.map((child) => child.id));
-      const uniqueNewChildren = childrenToInsert.filter((child) => !existingIds.has(child.id));
-      return {
-        ...node,
-        children: [...existingChildren, ...uniqueNewChildren],
-      };
-    }
-
-    if (!node.children?.length) {
-      return node;
-    }
-
-    const childResult = insertChildrenAtNode(node.children, parentId, childrenToInsert);
-    if (!childResult.inserted) {
-      return node;
-    }
-
-    inserted = true;
-    return {
-      ...node,
-      children: childResult.nodes,
-    };
-  });
-
-  return { nodes: nextNodes, inserted };
-}
-
-function collectIds(nodes: ReadonlyArray<MindmapNode>, into: Set<string>): void {
-  for (const node of nodes) {
-    into.add(node.id);
-    if (node.children?.length) collectIds(node.children, into);
-  }
-}
-
-/**
- * Node ids are slugified names (and LLM-supplied ids for generated nodes), so a
- * newly generated option can collide with an existing node anywhere in the tree
- * — duplicate ids break React keys (e.g. `n-portable`) and the id→coordinate
- * mapping in the design space. Remap any colliding child id to a unique one and
- * report the remap so callers can keep coordinates aligned.
- */
-function ensureUniqueChildIds(
-  allNodes: ReadonlyArray<MindmapNode>,
-  children: ReadonlyArray<MindmapNode>
-): { children: MindmapNode[]; remap: Record<string, string> } {
-  const used = new Set<string>();
-  collectIds(allNodes, used);
-  const remap: Record<string, string> = {};
-
-  const result = children.map((child) => {
-    let id = child.id;
-    if (used.has(id)) {
-      let n = 2;
-      while (used.has(`${child.id}-${n}`)) n++;
-      id = `${child.id}-${n}`;
-      remap[child.id] = id;
-    }
-    used.add(id);
-    return { ...child, id };
-  });
-
-  return { children: result, remap };
+/** A closed panel in the Examine view: thin icon button instead of a header bar. */
+function PanelIconButton({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: LucideIcon;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`Open ${label}`}
+      aria-label={`Open ${label}`}
+      className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border bg-background/90 shadow-md backdrop-blur transition-colors hover:bg-background"
+    >
+      <Icon className="h-4 w-4 text-muted-foreground" />
+    </button>
+  );
 }
 
 export default function MindmapPage() {
@@ -218,10 +163,14 @@ export default function MindmapPage() {
   const activeCandidateId = useMindmapStore((state) => state.activeCandidateId);
   const setActiveCandidate = useMindmapStore((state) => state.setActiveCandidate);
   const createCandidate = useMindmapStore((state) => state.createCandidate);
+  const appendCandidateTrail = useMindmapStore((state) => state.appendCandidateTrail);
   const setChoice = useMindmapStore((state) => state.setChoice);
   const optionState = useMindmapStore((state) => state.optionState);
   const rejectOption = useMindmapStore((state) => state.rejectOption);
   const reopenOption = useMindmapStore((state) => state.reopenOption);
+  const pruneMissingNodes = useMindmapStore((state) => state.pruneMissingNodes);
+  const trackUsage = useMindmapStore((state) => state.trackUsage);
+  const restoreSession = useMindmapStore((state) => state.restoreSession);
   const { mutateAsync: generateNodes, isPending: isGeneratingNodes } = useGenerateNodesMutation();
 
   const [selection, setSelection] = useState<MindmapSelection>({
@@ -229,7 +178,21 @@ export default function MindmapPage() {
     lineage: [...INITIAL_SELECTION.lineage],
   });
   const [generateError, setGenerateError] = useState<string | null>(null);
-  const [taxonomyDialogOpen, setTaxonomyDialogOpen] = useState(() => !taxonomy);
+  // First-run helper: auto-open the taxonomy dialog only AFTER the persisted
+  // store has rehydrated. At first render `taxonomy` is still null even when
+  // one is persisted (the persist middleware hydrates asynchronously), which
+  // used to flash this dialog open on every reload.
+  const [taxonomyDialogOpen, setTaxonomyDialogOpen] = useState(false);
+  useEffect(() => {
+    const openIfFirstRun = () => {
+      if (!useMindmapStore.getState().taxonomy) setTaxonomyDialogOpen(true);
+    };
+    if (useMindmapStore.persist.hasHydrated()) {
+      openIfFirstRun();
+      return;
+    }
+    return useMindmapStore.persist.onFinishHydration(openIfFirstRun);
+  }, []);
   const [generateNodesDialogOpen, setGenerateNodesDialogOpen] = useState(false);
 
   const activeDescriptionByTopic = useMemo(
@@ -239,6 +202,24 @@ export default function MindmapPage() {
 
   // ── Design-space view ──────────────────────────────────────────────────────
   const [view, setView] = useState<'map' | 'space' | 'axes'>('map');
+  // The side panels are canvas overlays; the Examine view is a document. Below
+  // xl the two cannot sit side by side, so entering Perspectives collapses the
+  // panels — and in that view a closed panel shrinks to a small icon button
+  // instead of a full-width header bar (re-expanding overlaps by the user's
+  // deliberate choice). Leaving restores the default open state.
+  const [contextPanelOpen, setContextPanelOpen] = useState(true);
+  const [projectsPanelOpen, setProjectsPanelOpen] = useState(true);
+  const [candidatePanelOpen, setCandidatePanelOpen] = useState(false);
+  useEffect(() => {
+    if (view === 'axes' && !window.matchMedia('(min-width: 1280px)').matches) {
+      setContextPanelOpen(false);
+      setProjectsPanelOpen(false);
+      setCandidatePanelOpen(false);
+    } else if (view !== 'axes') {
+      setContextPanelOpen(true);
+      setProjectsPanelOpen(true);
+    }
+  }, [view]);
   // Relevance lens: an on/off overlay on the design space (not a separate
   // mode — same view, same interactions, extra paint). Anchor is switchable
   // between the selected node and the active candidate.
@@ -258,6 +239,11 @@ export default function MindmapPage() {
   const { data: surface } = useSurfaceQuery(view === 'space');
   const { mutateAsync: locateNodes } = useLocateNodesMutation();
   const { mutateAsync: generateAt, isPending: isGeneratingAt } = useGenerateAtMutation();
+  const { mutateAsync: peekAt } = usePeekMutation();
+  // Gap preview (E1): a clicked empty cell opens this; generation happens only
+  // from its "Generate here" button.
+  const [gapPreview, setGapPreview] = useState<GapPreview | null>(null);
+  const sessionFileRef = useRef<HTMLInputElement>(null);
   const locatingRef = useRef(false);
   // Cancels the client-side wait on a running generate-at (job completes
   // server-side but its result is discarded).
@@ -288,13 +274,15 @@ export default function MindmapPage() {
     );
   };
 
-  // Best-effort: embed + locate any nodes that lack coordinates. Each node is
-  // attempted at most once per session; failures (e.g. embedding server down)
-  // leave the background surface intact and are retried on the next change.
+  // Best-effort: embed + locate every node once per session — including nodes
+  // with persisted coords, so values cached before a calibration change
+  // (register-map or support-baseline refit) refresh on load while the cached
+  // coords still render instantly. Failures (e.g. embedding server down) leave
+  // the background surface intact and are retried on the next change.
   useEffect(() => {
     if (!surface) return;
     const items = nodesToLocateItems(nodes, activeDescriptionByTopic, descriptionById).filter(
-      (it) => !coords[it.node_id] && !attemptedRef.current.has(it.node_id)
+      (it) => !attemptedRef.current.has(it.node_id)
     );
     if (items.length === 0 || locatingRef.current) return;
 
@@ -308,7 +296,7 @@ export default function MindmapPage() {
       .finally(() => {
         locatingRef.current = false;
       });
-  }, [surface, nodes, activeDescriptionByTopic, descriptionById, coords, locateNodes, mergeCoords]);
+  }, [surface, nodes, activeDescriptionByTopic, descriptionById, locateNodes, mergeCoords]);
 
   // The currently selected node, its description (id-keyed for generated nodes,
   // topic-keyed for taxonomy nodes), and its provenance (when generated).
@@ -341,15 +329,17 @@ export default function MindmapPage() {
     return ids;
   }, [data]);
 
-  // ── Candidates: locate each composed design in the frozen space ─────────────
-  // A candidate's position is the embedding of its combined option text; it is
-  // re-located whenever its composition changes (signature-tracked).
+  // ── Candidates: locate each design in the frozen space ──────────────────────
+  // A candidate's position is the embedding of its BRIEF when present (the
+  // identity layer — Part 10), else its composed option text; re-located
+  // whenever that text changes (signature-tracked). When the star moves, the
+  // old position joins the candidate's trail (its trajectory across revisions).
   const candidateTextSignatures = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     if (!surface) return;
     const items: Array<{ node_id: string; text: string }> = [];
     for (const candidate of Object.values(candidates)) {
-      const text = composeCandidateText(
+      const text = candidateEmbeddingText(
         candidate,
         nodes,
         activeDescriptionByTopic,
@@ -366,14 +356,28 @@ export default function MindmapPage() {
     }
     if (items.length === 0) return;
     locateNodes(items)
-      .then((located) => mergeCoords(located))
+      .then((located) => {
+        for (const [key, coord] of Object.entries(located)) {
+          const previous = useMindmapStore.getState().coords[key];
+          if (
+            previous &&
+            Math.hypot(previous.x - coord.x, previous.y - coord.y) > 0.02
+          ) {
+            appendCandidateTrail(key.replace(/^cand:/, ''), {
+              x: previous.x,
+              y: previous.y,
+            });
+          }
+        }
+        mergeCoords(located);
+      })
       .catch(() => {
         // Allow a retry on the next composition change.
         for (const it of items) {
           candidateTextSignatures.current.delete(it.node_id.replace(/^cand:/, ''));
         }
       });
-  }, [surface, candidates, nodes, activeDescriptionByTopic, descriptionById, coords, locateNodes, mergeCoords]);
+  }, [surface, candidates, nodes, activeDescriptionByTopic, descriptionById, coords, locateNodes, mergeCoords, appendCandidateTrail]);
 
   const candidateMarkers = useMemo<CandidateMarker[]>(() => {
     const markers: CandidateMarker[] = [];
@@ -386,6 +390,7 @@ export default function MindmapPage() {
         x: coord.x,
         y: coord.y,
         active: candidate.id === activeCandidateId,
+        trail: candidate.trail,
       });
     }
     return markers;
@@ -438,7 +443,8 @@ export default function MindmapPage() {
 
   const candidateAnchor = useMemo(() => {
     if (!activeCandidate) return null;
-    const text = composeCandidateText(
+    // Brief-first: the lens asks about the actual design, not the choice list.
+    const text = candidateEmbeddingText(
       activeCandidate,
       nodes,
       activeDescriptionByTopic,
@@ -460,10 +466,37 @@ export default function MindmapPage() {
   );
 
   const handleChooseOption = () => {
-    if (!selectedNode || !selectedAspect) return;
+    if (!selectedNode || !selectedAspect || selectedRejection) return;
     if (!activeCandidateId || !candidates[activeCandidateId]) createCandidate();
     setChoice(selectedAspect.id, isChosen ? null : selectedNode.id);
   };
+
+  // How many candidates currently include the selected option — shown as a
+  // warning before rejecting (rejection clears it from all of them).
+  const chosenInCandidates = useMemo(
+    () =>
+      selectedNode
+        ? Object.values(candidates).filter((candidate) =>
+            Object.values(candidate.choices).includes(selectedNode.id)
+          ).length
+        : 0,
+    [candidates, selectedNode]
+  );
+
+  // Exploration stats (E5) — the study instrument, shown live and exported.
+  const explorationStats = useMemo(
+    () =>
+      computeExplorationStats({
+        nodes,
+        coords,
+        discovered,
+        provenance,
+        optionState,
+        candidates,
+        activeCandidateId,
+      }),
+    [nodes, coords, discovered, provenance, optionState, candidates, activeCandidateId]
+  );
 
   useEffect(() => {
     selectTopic({
@@ -476,12 +509,12 @@ export default function MindmapPage() {
   const handleSelect = (nextSelection: MindmapSelection) => {
     // Armed pick flow: if the click landed on an option of the awaited aspect
     // (works from the mind map AND the design space — both route here), fill
-    // the candidate's slot and disarm.
+    // the candidate's slot and disarm. Rejected options stay un-choosable.
     if (pendingChoiceAspectId && nextSelection.lineage.length >= 3) {
       const aspect = findNodeByLineage(nodes, nextSelection.lineage.slice(0, 2));
       const optionId =
         nextSelection.nodeId ?? findNodeByLineage(nodes, nextSelection.lineage)?.id;
-      if (aspect?.id === pendingChoiceAspectId && optionId) {
+      if (aspect?.id === pendingChoiceAspectId && optionId && !optionState[optionId]) {
         setChoice(pendingChoiceAspectId, optionId);
         setPendingChoiceAspectId(null);
       }
@@ -492,6 +525,10 @@ export default function MindmapPage() {
       ...(nextSelection.nodeId ? { nodeId: nextSelection.nodeId } : {}),
     });
     setActiveLine(null); // a fresh selection clears any traced connector
+    // Release any pinned corpus project: the inspection pin would otherwise
+    // shadow the new selection's related projects at the top of the panel
+    // ("stuck first project") for every node selected after a glyph click.
+    setFocusProjectId(null);
   };
 
   // Structural edits from mind-elixir. A rename invalidates the node's position
@@ -506,6 +543,10 @@ export default function MindmapPage() {
       };
       for (const node of nodes) collect(node);
 
+      const nextIds = new Set<string>();
+      collectIds(nextNodes, nextIds);
+
+      // A rename invalidates the node's position (embedded from the old text).
       const renamed: string[] = [];
       const diff = (node: MindmapNode) => {
         const prev = prevTopics.get(node.id);
@@ -513,14 +554,18 @@ export default function MindmapPage() {
         for (const child of node.children ?? []) diff(child);
       };
       for (const node of nextNodes) diff(node);
-
       if (renamed.length > 0) {
         removeCoords(renamed);
         renamed.forEach((id) => attemptedRef.current.delete(id));
       }
+
+      // A deletion orphans coords/provenance/option-state/choices — prune them.
+      const removedAny = [...prevTopics.keys()].some((id) => !nextIds.has(id));
+      if (removedAny) pruneMissingNodes(nextIds);
+
       setNodes(nextNodes);
     },
-    [nodes, removeCoords, setNodes]
+    [nodes, removeCoords, pruneMissingNodes, setNodes]
   );
 
   const handleGenerateAt = useCallback(
@@ -556,6 +601,15 @@ export default function MindmapPage() {
           focusNode: { id: fallback.id, topic: fallback.topic },
           lineage: selection.lineage.length ? selection.lineage : [fallback.topic],
           coords,
+          // Squiggle hypothesis (Part 10): the active candidate's brief
+          // conditions gap-filling; the backend logs it for the A/B. Read from
+          // the store at call time so the callback never carries a stale brief.
+          brief: (() => {
+            const s = useMindmapStore.getState();
+            return s.activeCandidateId
+              ? s.candidates[s.activeCandidateId]?.brief ?? null
+              : null;
+          })(),
           signal: abort.signal,
         });
 
@@ -604,10 +658,12 @@ export default function MindmapPage() {
             y: c.y,
             ...(c.z != null ? { z: c.z } : {}),
             ...(c.confidence != null ? { confidence: c.confidence } : {}),
+            ...(c.support != null ? { support: c.support } : {}),
           };
           attemptedRef.current.add(id);
         }
         mergeCoords(merged);
+        trackUsage('generate_at');
 
         // Mark the clicked cell "discovered" (drawn hollow) and store + show the
         // connector to where the nodes landed, so the (often distant) placement is
@@ -643,8 +699,66 @@ export default function MindmapPage() {
       recordDiscovery,
       recordProvenance,
       mergeDescriptions,
+      trackUsage,
     ]
   );
+
+  // Gap preview (E1): read the neighbourhood before committing LLM time.
+  const handlePeekAt = useCallback(
+    async (x: number, y: number, screen: { x: number; y: number }) => {
+      trackUsage('peek');
+      setGapPreview({ x, y, screenX: screen.x, screenY: screen.y, data: null });
+      try {
+        const data = await peekAt({ x, y, allNodes: nodes, coords });
+        // Ignore stale responses if the user has already peeked elsewhere.
+        setGapPreview((prev) =>
+          prev && prev.x === x && prev.y === y ? { ...prev, data } : prev
+        );
+      } catch (error) {
+        setGapPreview(null);
+        setGenerateError(error instanceof Error ? error.message : 'Gap preview failed.');
+      }
+    },
+    [nodes, coords, peekAt, trackUsage]
+  );
+
+  const handleConfirmGenerate = useCallback(
+    (x: number, y: number) => {
+      setGapPreview(null);
+      void handleGenerateAt(x, y);
+    },
+    [handleGenerateAt]
+  );
+
+  // ── Session save/load: the machine-restorable exploration record ────────────
+  const handleSaveSession = () => {
+    trackUsage('session_save');
+    downloadTextFile(
+      `llmind-session-${new Date().toISOString().slice(0, 10)}.json`,
+      buildSessionFile(selectSessionSnapshot(useMindmapStore.getState())),
+      'application/json;charset=utf-8'
+    );
+  };
+
+  const handleLoadSession = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = ''; // allow re-selecting the same file
+    if (!file) return;
+    try {
+      const snapshot = parseSessionFile(await file.text());
+      if (!window.confirm(`Replace the current exploration with "${file.name}"?`)) return;
+      restoreSession(snapshot);
+      setSelection({ topic: INITIAL_SELECTION.topic, lineage: [...INITIAL_SELECTION.lineage] });
+      setActiveLine(null);
+      setGapPreview(null);
+      setPendingChoiceAspectId(null);
+      setLensOn(false);
+      attemptedRef.current.clear();
+      trackUsage('session_load');
+    } catch (error) {
+      setGenerateError(error instanceof Error ? error.message : 'Could not load session.');
+    }
+  };
 
   const handleGenerateNodes = async (
     dialogParams?: Pick<GenerateNodesParams, 'description' | 'mode' | 'reasoningEffort'>
@@ -708,6 +822,7 @@ export default function MindmapPage() {
         if (n.desc) descriptionEntries[id] = n.desc;
       }
       mergeDescriptions(descriptionEntries);
+      trackUsage('generate_nodes');
     } catch (error) {
       setGenerateError(
         error instanceof Error ? error.message : 'Failed to generate nodes. Please try again.'
@@ -720,7 +835,7 @@ export default function MindmapPage() {
       {/* Floating Navigator (Bottom) — content-sized so the view toggles and the
           generate buttons never wrap or overlap. */}
       <header className="absolute bottom-8 left-1/2 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-4 rounded-full border bg-background/80 px-4 py-2 shadow-xl backdrop-blur-md transition-all hover:bg-background/90">
-        <div className="flex items-center justify-start">
+        <div className="flex items-center justify-start gap-1">
           <Link
             href="/"
             className="flex items-center gap-2 whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold text-muted-foreground transition-all hover:bg-muted hover:text-foreground active:scale-95"
@@ -728,6 +843,29 @@ export default function MindmapPage() {
             <Home className="h-4 w-4" />
             Home
           </Link>
+          <button
+            type="button"
+            onClick={handleSaveSession}
+            title="Save session (full exploration state as JSON)"
+            className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Save className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => sessionFileRef.current?.click()}
+            title="Load a saved session (replaces the current exploration)"
+            className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <FolderOpen className="h-4 w-4" />
+          </button>
+          <input
+            ref={sessionFileRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={handleLoadSession}
+          />
         </div>
 
         <div className="flex items-center justify-center">
@@ -747,7 +885,10 @@ export default function MindmapPage() {
             </button>
             <button
               type="button"
-              onClick={() => setView('space')}
+              onClick={() => {
+                setView('space');
+                trackUsage('view_space');
+              }}
               aria-pressed={view === 'space'}
               className={`flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
                 view === 'space'
@@ -760,7 +901,10 @@ export default function MindmapPage() {
             </button>
             <button
               type="button"
-              onClick={() => setView('axes')}
+              onClick={() => {
+                setView('axes');
+                trackUsage('view_axes');
+              }}
               aria-pressed={view === 'axes'}
               className={`flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
                 view === 'axes'
@@ -802,9 +946,20 @@ export default function MindmapPage() {
         </div>
       </header>
 
-      {/* Floating Lineage / Info Panel */}
-      <div className="absolute top-4 left-4 z-40 w-full max-w-sm">
-        <Collapsible defaultOpen={true}>
+      {/* Floating Lineage / Info Panel. The Examine view is a document, not a
+          pannable canvas — its content clears the panels at xl widths; below
+          that, entering Perspectives collapses them, and a closed panel there
+          renders as a thin icon button (pointer-events pass through the rest). */}
+      <div className="pointer-events-none absolute top-4 left-4 z-40 w-full max-w-sm">
+        {view === 'axes' && !contextPanelOpen ? (
+          <PanelIconButton
+            icon={Info}
+            label="Context"
+            onClick={() => setContextPanelOpen(true)}
+          />
+        ) : (
+        <div className="pointer-events-auto">
+        <Collapsible open={contextPanelOpen} onOpenChange={setContextPanelOpen}>
           <section className="overflow-hidden rounded-2xl border bg-background/90 shadow-xl backdrop-blur-md">
             <div className="flex items-center justify-between px-4 py-3">
               <div className="flex items-center gap-2">
@@ -879,7 +1034,13 @@ export default function MindmapPage() {
                         <button
                           type="button"
                           onClick={handleChooseOption}
-                          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                          disabled={Boolean(selectedRejection)}
+                          title={
+                            selectedRejection
+                              ? 'Rejected options cannot be chosen — reopen it first'
+                              : undefined
+                          }
+                          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                             isChosen
                               ? 'border-violet-500 bg-violet-500/10 text-violet-700 hover:bg-violet-500/20'
                               : 'text-foreground hover:bg-muted'
@@ -910,6 +1071,12 @@ export default function MindmapPage() {
                       {selectedRejection ? (
                         <p className="text-[11px] text-destructive">
                           Rejected{selectedRejection.reason ? ` — ${selectedRejection.reason}` : ''}
+                        </p>
+                      ) : null}
+                      {showRejectInput && !selectedRejection && chosenInCandidates > 0 ? (
+                        <p className="text-[10px] font-medium text-amber-700">
+                          Also removes it from {chosenInCandidates} candidate
+                          {chosenInCandidates > 1 ? 's' : ''}.
                         </p>
                       ) : null}
                       {showRejectInput && !selectedRejection ? (
@@ -949,28 +1116,56 @@ export default function MindmapPage() {
                       </button>
                     </div>
                   ) : null}
+
+                  {/* Exploration stats (E5) — live progress + study instrument */}
+                  <p className="border-t pt-2 text-[10px] leading-relaxed text-muted-foreground">
+                    {formatExplorationStats(explorationStats)}
+                  </p>
                 </div>
               </ScrollArea>
             </CollapsibleContent>
           </section>
         </Collapsible>
 
+        </div>
+        )}
+
         {/* Candidate composition panel */}
-        <div className="mt-3">
+        {view === 'axes' && !candidatePanelOpen ? (
+          <div className="mt-3">
+            <PanelIconButton
+              icon={Star}
+              label="Candidate"
+              onClick={() => setCandidatePanelOpen(true)}
+            />
+          </div>
+        ) : (
+        <div className="pointer-events-auto mt-3">
           <CandidatePanel
+            open={candidatePanelOpen}
+            onOpenChange={setCandidatePanelOpen}
             descriptionByTopic={activeDescriptionByTopic}
             onOpenProject={setFocusProjectId}
-            onOpenCompare={() => setCompareOpen(true)}
+            onOpenCompare={() => {
+              trackUsage('compare_opened');
+              setCompareOpen(true);
+            }}
             pendingAspectId={pendingChoiceAspectId}
             onStartPickChoice={setPendingChoiceAspectId}
             onCancelPickChoice={() => setPendingChoiceAspectId(null)}
             onInspectRelevance={() => {
+              trackUsage('lens_on');
               setLensSource('candidate');
               setLensOn(true);
               setView('space');
             }}
+            onOpenExamine={() => {
+              trackUsage('examine_opened');
+              setView('axes');
+            }}
           />
         </div>
+        )}
       </div>
 
       {/* Relevance lens: an overlay toggle on the design space (not a mode) */}
@@ -979,7 +1174,10 @@ export default function MindmapPage() {
           <div className="flex items-center gap-1 rounded-full border bg-background/90 p-0.5 shadow-md backdrop-blur">
             <button
               type="button"
-              onClick={() => setLensOn((v) => !v)}
+              onClick={() => {
+                if (!lensOn) trackUsage('lens_on');
+                setLensOn(!lensOn);
+              }}
               aria-pressed={lensOn}
               disabled={!lensOn && !lensAnchor}
               title={
@@ -1034,7 +1232,7 @@ export default function MindmapPage() {
       {/* Main view layer — all views share nodes + selection */}
       <div className="relative h-full w-full">
         {view === 'axes' ? (
-          <AxesView
+          <ExamineView
             nodes={nodes}
             selection={selection}
             onSelectNode={handleSelect}
@@ -1049,7 +1247,10 @@ export default function MindmapPage() {
               coords={coords}
               selection={selection}
               onSelectNode={handleSelect}
-              onGenerateAt={handleGenerateAt}
+              onGenerateAt={handleConfirmGenerate}
+              onPeekAt={handlePeekAt}
+              preview={gapPreview}
+              onDismissPreview={() => setGapPreview(null)}
               onSelectProject={setFocusProjectId}
               isGenerating={isGeneratingAt}
               pendingCell={pendingCell}
@@ -1114,9 +1315,18 @@ export default function MindmapPage() {
         descriptionByTopic={activeDescriptionByTopic}
       />
 
-      {/* Floating Related Projects Panel */}
-      <div className="absolute top-4 right-4 z-40 w-full max-w-md">
-        <Collapsible defaultOpen={true}>
+      {/* Floating Related Projects Panel (collapses to an icon in Examine — see
+          the lineage panel note) */}
+      <div className="pointer-events-none absolute top-4 right-4 z-40 flex w-full max-w-md justify-end">
+        {view === 'axes' && !projectsPanelOpen ? (
+          <PanelIconButton
+            icon={PanelsRightBottom}
+            label="Related projects"
+            onClick={() => setProjectsPanelOpen(true)}
+          />
+        ) : (
+        <div className="pointer-events-auto w-full">
+        <Collapsible open={projectsPanelOpen} onOpenChange={setProjectsPanelOpen}>
           <section className="overflow-hidden rounded-2xl border bg-background/90 shadow-xl backdrop-blur-md">
             <div className="flex items-center justify-between px-4 py-3">
               <div className="flex items-center gap-2">
@@ -1138,18 +1348,20 @@ export default function MindmapPage() {
             </div>
 
             <CollapsibleContent>
-              <ScrollArea className="max-h-[calc(100vh-12rem)]">
-                <div className="p-4 pt-0">
-                  <SimpleProjectPanel
-                    projects={data?.projects ?? []}
-                    isLoading={isFetching}
-                    focusProject={focusProject ?? null}
-                  />
-                </div>
-              </ScrollArea>
+              {/* No outer ScrollArea: the panel's two columns scroll
+                  independently (a wrapping scroller would scroll them as one). */}
+              <div className="p-4 pt-0">
+                <SimpleProjectPanel
+                  projects={data?.projects ?? []}
+                  isLoading={isFetching}
+                  focusProject={focusProject ?? null}
+                />
+              </div>
             </CollapsibleContent>
           </section>
         </Collapsible>
+        </div>
+        )}
       </div>
     </main>
   );

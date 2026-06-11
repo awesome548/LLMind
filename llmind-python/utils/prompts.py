@@ -80,22 +80,50 @@ In <JSON> provide ID of the node that you explored and create new Node ids accor
 Suppose explored node is "Aspect", each of new Nodes is "Option":
 - Aspect: a key dimension or parameter of the design space (e.g., display technology, location, type of interaction).
 - Option: possible alternatives for an aspect (e.g., for the aspect "Display," options might include LED panels or projection).
-the options should be concise and simple; each "desc" is ONE dense, specific sentence describing the option (it is embedded for retrieval — be concrete, not generic).
+the options should be concise and simple; each "desc" is 2-4 sentences written like a real project description (a catalog entry of a built installation): name the mechanism, material or technology, the interaction, and the audience experience or context. It is embedded to position the idea among real project descriptions — concrete nouns, no marketing fluff.
 
 Use the following JSON structure exactly:
 {
   "parent_id": "<SELECTED_NODE_ID>",
   "options": [
-    { "id": "<new_node_id>", "topic": "<option label>", "desc": "<one-sentence description>" },
-    { "id": "<new_node_id>", "topic": "<option label>", "desc": "<one-sentence description>" }
+    { "id": "<new_node_id>", "topic": "<option label>", "desc": "<project-style description>" },
+    { "id": "<new_node_id>", "topic": "<option label>", "desc": "<project-style description>" }
   ]
 }"""
+
+
+# Drafts a candidate's BRIEF (its identity layer) from its committed choices —
+# the starting point the designer edits, never the final word (Part 10 I1).
+# Output is plain text (no JSON): the brief is embedded as-is for placement, so
+# it must read like the corpus's own project descriptions.
+DRAFT_BRIEF_PROMPT = """TASK:
+Write the project description (brief) for ONE new media architecture design that
+commits to all of the choices below.
+
+PROJECT CONTEXT (the designer's overall project; may be empty):
+{{PROJECT_OVERVIEW}}
+
+COMMITTED CHOICES (one per design dimension):
+{{CHOICES}}
+
+INSTRUCTIONS:
+- 3-5 sentences, written like a real project description (the catalog entry of a
+  built installation): name the mechanism, material or technology, the
+  interaction, and the audience experience or context. Concrete nouns, no
+  marketing fluff.
+- Every committed choice must be EMBODIED in the design — woven into one
+  coherent concept, not listed.
+- Do not add commitments that contradict the choices.
+- Respond with ONLY the description text: no headings, no quotes, no preamble.
+"""
 
 
 # Version tag logged with every generate-at call so prompt/seeding variants can
 # be compared in data/projection/generate_log.jsonl. Bump when the prompt or
 # the seeding strategy changes behaviour.
-GENERATE_AT_PROMPT_VERSION = 2
+# v3: descs became 2-4 sentence project-style text (register-gap fix, Part 9 H1).
+# v4: optional DESIGNER_BRIEF context block (squiggle hypothesis, Part 10 I2).
+GENERATE_AT_PROMPT_VERSION = 4
 
 GENERATE_AT_PROMPT = """TASK:
 The designer clicked an UNOCCUPIED location on a 2D map of the design space — a
@@ -110,6 +138,11 @@ NEARBY EXISTING IDEAS (already on the map near the click — do NOT duplicate or
 trivially rephrase any of these):
 {{NEARBY_OPTIONS}}
 
+DESIGNER'S CURRENT CONCEPT (their work-in-progress design — context only: use it
+to keep options relevant to their project, but do NOT restate, refine, or stay
+close to it; the task is still to fill the map gap):
+{{DESIGNER_BRIEF}}
+
 PARENT ASPECT (the new Options will be filed under this dimension):
 ID: {{SELECTED_NODE_ID}}
 Topic: {{SELECTED_NODE_TOPIC}}
@@ -122,9 +155,11 @@ INSTRUCTIONS:
   distinct from every one of them: fill the gap, do not imitate the nearest
   project and do not average them into something generic.
 - Each Option must be a plausible alternative within the parent Aspect.
-- Each "desc" is ONE dense, specific sentence describing the option. It is
-  embedded to position the idea on the map, so make it concrete: name the
-  mechanism, material, interaction, or context that makes this option itself.
+- Each "desc" is 2-4 sentences written like a real project description (a
+  catalog entry of a built installation): name the mechanism, material or
+  technology, the interaction, and the audience experience or context. It is
+  embedded to position the idea on the map among real project descriptions —
+  concrete nouns, no marketing fluff.
 - 2 to 4 Options; concise topics (2-5 words).
 
 Respond in the following format
@@ -139,6 +174,6 @@ Use the following JSON structure exactly:
 {
   "parent_id": "<SELECTED_NODE_ID>",
   "options": [
-    { "id": "<new_node_id>", "topic": "<option label>", "desc": "<one-sentence description>" }
+    { "id": "<new_node_id>", "topic": "<option label>", "desc": "<project-style description>" }
   ]
 }"""

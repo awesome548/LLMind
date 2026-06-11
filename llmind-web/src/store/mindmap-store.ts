@@ -11,22 +11,11 @@ import type {
   MindmapNode,
   NodeProvenance,
   OptionStateEntry,
+  RubricMetric,
 } from '../features/mindmap/types';
 import type { CoordMap, GenerationTrail } from '../features/design-space/types';
-import type { MindmapProjectSchema } from '../types/api-aliases';
 
 const DEFAULT_CONTEXT_TEXT = 'Mindmap';
-
-const DEFAULT_PROJECTS: ReadonlyArray<MindmapProjectSchema> = [
-  {
-    Name: 'Relevant projects will appear here',
-    Descriptions: '',
-    Details: '',
-  },
-];
-
-const getDefaultProjects = (): MindmapProjectSchema[] =>
-  DEFAULT_PROJECTS.map((project) => ({ ...project }));
 
 const buildContextText = (topic: string, lineage: string[]): string => {
   const hierarchySegments = lineage.filter(Boolean);
@@ -50,12 +39,9 @@ export interface MindmapSelectionInput {
 }
 
 interface MindmapStoreState {
-  jmRef: unknown | null;
   contextText: string;
   contextDescription: string;
   selectedTopic: string;
-  projects: MindmapProjectSchema[];
-  projectsLoading: boolean;
   taxonomy: TaxonomyInput | null;
   /** The working tree — shared by the mind map and the design space, persisted
    * so generated nodes survive a reload (they are NOT derivable from taxonomy). */
@@ -77,11 +63,11 @@ interface MindmapStoreState {
   optionState: Record<string, OptionStateEntry>;
   /** Perspectives view: the chosen axis poles (null until first configured). */
   axesConfig: AxesConfig | null;
-  setJmRef: (ref: unknown | null) => void;
+  /** Perspectives rubric: the project's persistent examination metrics. */
+  rubric: RubricMetric[];
+  /** Feature-usage counters (research instrumentation; included in session export). */
+  usage: Record<string, number>;
   selectTopic: (input: MindmapSelectionInput) => void;
-  setContext: (context: { contextText: string; contextDescription: string }) => void;
-  setProjects: (projects: MindmapProjectSchema[]) => void;
-  setProjectsLoading: (isLoading: boolean) => void;
   /** Replaces the taxonomy AND rebuilds the working tree from it, invalidating
    * all exploration state (coords/discovered/provenance) — a new taxonomy is a
    * new design space overlay. */
@@ -98,27 +84,32 @@ interface MindmapStoreState {
   deleteCandidate: (id: string) => void;
   setActiveCandidate: (id: string | null) => void;
   renameCandidate: (id: string, name: string) => void;
-  /** Sets/clears the ACTIVE candidate's choice for an aspect (radio semantics). */
+  /** Sets the candidate's BRIEF (its identity layer — the primary embedding). */
+  setCandidateBrief: (id: string, brief: string) => void;
+  /** Records a previous star position before the brief moves it (capped). */
+  appendCandidateTrail: (id: string, point: { x: number; y: number }) => void;
+  addRubricMetric: (metric: RubricMetric) => void;
+  removeRubricMetric: (metricId: string) => void;
+  /** Sets/clears the ACTIVE candidate's choice for an aspect (radio semantics).
+   * Refuses rejected options — an option is never chosen AND rejected. */
   setChoice: (aspectId: string, optionId: string | null) => void;
+  /** Rejects an option and removes it from EVERY candidate's choices. */
   rejectOption: (nodeId: string, reason?: string) => void;
   reopenOption: (nodeId: string) => void;
   setAxesConfig: (config: AxesConfig | null) => void;
-  setMindmapData: (payload: {
-    contextText?: string;
-    contextDescription?: string;
-    projects?: MindmapProjectSchema[];
-    projectsLoading?: boolean;
-  }) => void;
+  /** Drop state for nodes no longer in the tree (after deletions). Candidate
+   * coordinates (`cand:` keys) are exempt — candidates are pruned by choices. */
+  pruneMissingNodes: (validIds: ReadonlySet<string>) => void;
+  trackUsage: (event: string) => void;
+  /** Replace the whole exploration with an imported session snapshot. */
+  restoreSession: (snapshot: SessionSnapshot) => void;
   resetMindmapStore: () => void;
 }
 
 const createInitialState = () => ({
-  jmRef: null as unknown | null,
   contextText: DEFAULT_CONTEXT_TEXT,
   contextDescription: '',
   selectedTopic: '',
-  projects: getDefaultProjects(),
-  projectsLoading: false,
   taxonomy: null as TaxonomyInput | null,
   nodes: cloneNodes(SCHEMA_MINDMAP_NODES) as ReadonlyArray<MindmapNode>,
   coords: {} as CoordMap,
@@ -129,34 +120,66 @@ const createInitialState = () => ({
   activeCandidateId: null as string | null,
   optionState: {} as Record<string, OptionStateEntry>,
   axesConfig: null as AxesConfig | null,
+  rubric: [] as RubricMetric[],
+  usage: {} as Record<string, number>,
 });
 
 type PersistedState = ReturnType<typeof createInitialState>;
+
+/** The persisted exploration slices — also the session save/load payload. */
+export type SessionSnapshot = Pick<
+  MindmapStoreState,
+  | 'contextText'
+  | 'contextDescription'
+  | 'selectedTopic'
+  | 'taxonomy'
+  | 'nodes'
+  | 'coords'
+  | 'discovered'
+  | 'provenance'
+  | 'descriptionById'
+  | 'candidates'
+  | 'activeCandidateId'
+  | 'optionState'
+  | 'axesConfig'
+  | 'rubric'
+  | 'usage'
+>;
+
+/** Single definition of what persists / what a session file contains. */
+export const selectSessionSnapshot = (state: SessionSnapshot): SessionSnapshot => ({
+  contextText: state.contextText,
+  contextDescription: state.contextDescription,
+  selectedTopic: state.selectedTopic,
+  taxonomy: state.taxonomy,
+  nodes: state.nodes,
+  coords: state.coords,
+  discovered: state.discovered,
+  provenance: state.provenance,
+  descriptionById: state.descriptionById,
+  candidates: state.candidates,
+  activeCandidateId: state.activeCandidateId,
+  optionState: state.optionState,
+  axesConfig: state.axesConfig,
+  rubric: state.rubric,
+  usage: state.usage,
+});
+
+const bumpUsage = (usage: Record<string, number>, event: string) => ({
+  ...usage,
+  [event]: (usage[event] ?? 0) + 1,
+});
 
 export const useMindmapStore = create<MindmapStoreState>()(
   devtools(
     persist(
       (set, get) => ({
         ...createInitialState(),
-        setJmRef: (ref) => set(() => ({ jmRef: ref })),
         selectTopic: ({ topic, lineage = [], contextDescription = '' }) =>
           set(() => ({
             contextText: buildContextText(topic, lineage),
             contextDescription,
             selectedTopic: topic,
-          })),
-        setContext: ({ contextText, contextDescription }) =>
-          set(() => ({
-            contextText,
-            contextDescription,
-          })),
-        setProjects: (projects) =>
-          set(() => ({
-            projects: projects.map((project) => ({ ...project })),
-          })),
-        setProjectsLoading: (isLoading) =>
-          set(() => ({
-            projectsLoading: isLoading,
           })),
         setTaxonomy: (taxonomy) =>
           set(() => ({
@@ -170,6 +193,7 @@ export const useMindmapStore = create<MindmapStoreState>()(
             activeCandidateId: null,
             optionState: {},
             axesConfig: null,
+            rubric: [],
           })),
         setNodes: (nodes) => set(() => ({ nodes })),
         mergeCoords: (coords) =>
@@ -206,6 +230,7 @@ export const useMindmapStore = create<MindmapStoreState>()(
               },
             },
             activeCandidateId: id,
+            usage: bumpUsage(state.usage, 'candidate_created'),
           }));
           return id;
         },
@@ -230,25 +255,69 @@ export const useMindmapStore = create<MindmapStoreState>()(
               candidates: { ...state.candidates, [id]: { ...candidate, name } },
             };
           }),
+        setCandidateBrief: (id, brief) =>
+          set((state) => {
+            const candidate = state.candidates[id];
+            if (!candidate) return {};
+            return {
+              candidates: { ...state.candidates, [id]: { ...candidate, brief } },
+            };
+          }),
+        appendCandidateTrail: (id, point) =>
+          set((state) => {
+            const candidate = state.candidates[id];
+            if (!candidate) return {};
+            const trail = [...(candidate.trail ?? []), point].slice(-10);
+            return {
+              candidates: { ...state.candidates, [id]: { ...candidate, trail } },
+            };
+          }),
+        addRubricMetric: (metric) =>
+          set((state) => ({ rubric: [...state.rubric, metric] })),
+        removeRubricMetric: (metricId) =>
+          set((state) => ({
+            rubric: state.rubric.filter((m) => m.id !== metricId),
+          })),
         setChoice: (aspectId, optionId) =>
           set((state) => {
             const id = state.activeCandidateId;
             const candidate = id ? state.candidates[id] : undefined;
             if (!id || !candidate) return {};
+            // Invariant: an option is never chosen AND rejected.
+            if (optionId !== null && state.optionState[optionId]) return {};
             const choices = { ...candidate.choices };
             if (optionId === null) delete choices[aspectId];
             else choices[aspectId] = optionId;
             return {
               candidates: { ...state.candidates, [id]: { ...candidate, choices } },
+              ...(optionId !== null ? { usage: bumpUsage(state.usage, 'choice_set') } : {}),
             };
           }),
         rejectOption: (nodeId, reason) =>
-          set((state) => ({
-            optionState: {
-              ...state.optionState,
-              [nodeId]: { state: 'rejected', ...(reason ? { reason } : {}) },
-            },
-          })),
+          set((state) => {
+            // Invariant: rejecting clears the option from every candidate.
+            const candidates = Object.fromEntries(
+              Object.entries(state.candidates).map(([id, candidate]) => [
+                id,
+                {
+                  ...candidate,
+                  choices: Object.fromEntries(
+                    Object.entries(candidate.choices).filter(
+                      ([, optionId]) => optionId !== nodeId
+                    )
+                  ),
+                },
+              ])
+            );
+            return {
+              candidates,
+              optionState: {
+                ...state.optionState,
+                [nodeId]: { state: 'rejected', ...(reason ? { reason } : {}) },
+              },
+              usage: bumpUsage(state.usage, 'option_rejected'),
+            };
+          }),
         reopenOption: (nodeId) =>
           set((state) => {
             const next = { ...state.optionState };
@@ -256,16 +325,50 @@ export const useMindmapStore = create<MindmapStoreState>()(
             return { optionState: next };
           }),
         setAxesConfig: (config) => set(() => ({ axesConfig: config })),
-        setMindmapData: (payload) =>
+        pruneMissingNodes: (validIds) =>
+          set((state) => {
+            const keepEntries = <V,>(record: Record<string, V>) =>
+              Object.fromEntries(
+                Object.entries(record).filter(
+                  ([id]) => validIds.has(id) || id.startsWith('cand:')
+                )
+              );
+            const candidates = Object.fromEntries(
+              Object.entries(state.candidates).map(([id, candidate]) => [
+                id,
+                {
+                  ...candidate,
+                  choices: Object.fromEntries(
+                    Object.entries(candidate.choices).filter(
+                      ([aspectId, optionId]) =>
+                        validIds.has(aspectId) && validIds.has(optionId)
+                    )
+                  ),
+                },
+              ])
+            );
+            return {
+              coords: keepEntries(state.coords),
+              provenance: keepEntries(state.provenance),
+              optionState: keepEntries(state.optionState),
+              descriptionById: keepEntries(state.descriptionById),
+              candidates,
+              rubric: state.rubric.filter(
+                (m) =>
+                  validIds.has(m.aspectId) &&
+                  validIds.has(m.poleAId) &&
+                  validIds.has(m.poleBId)
+              ),
+            };
+          }),
+        trackUsage: (event) =>
           set((state) => ({
-            contextText: payload.contextText ?? state.contextText,
-            contextDescription:
-              payload.contextDescription ?? state.contextDescription,
-            projects: payload.projects
-              ? payload.projects.map((project) => ({ ...project }))
-              : state.projects,
-            projectsLoading: payload.projectsLoading ?? state.projectsLoading,
+            usage: { ...state.usage, [event]: (state.usage[event] ?? 0) + 1 },
           })),
+        // Defaults first, so sessions saved before a slice existed (e.g. rubric)
+        // reset it instead of leaking the current exploration's state.
+        restoreSession: (snapshot) =>
+          set(() => ({ ...selectSessionSnapshot(createInitialState()), ...snapshot })),
         resetMindmapStore: () => set(() => createInitialState()),
       }),
       {
@@ -292,22 +395,7 @@ export const useMindmapStore = create<MindmapStoreState>()(
           }
           return persisted as PersistedState;
         },
-        partialize: (state) => ({
-          contextText: state.contextText,
-          contextDescription: state.contextDescription,
-          selectedTopic: state.selectedTopic,
-          projects: state.projects,
-          taxonomy: state.taxonomy,
-          nodes: state.nodes,
-          coords: state.coords,
-          discovered: state.discovered,
-          provenance: state.provenance,
-          descriptionById: state.descriptionById,
-          candidates: state.candidates,
-          activeCandidateId: state.activeCandidateId,
-          optionState: state.optionState,
-          axesConfig: state.axesConfig,
-        }),
+        partialize: (state) => selectSessionSnapshot(state),
       }
     ),
     { name: 'mindmap-store' }

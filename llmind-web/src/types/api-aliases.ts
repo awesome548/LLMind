@@ -35,7 +35,7 @@ export type CorpusProjectResponseSchema = components['schemas']['CorpusProjectRe
 export interface GeneratedNodeSchema {
   node_id: string;
   topic: string;
-  /** One-sentence description — embedded for placement and retrieval. */
+  /** Project-style description (2-4 sentences) — embedded for placement and retrieval. */
   desc?: string;
   parent_node: string;
 }

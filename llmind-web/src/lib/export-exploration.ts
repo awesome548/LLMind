@@ -8,8 +8,12 @@ import type {
   NodeProvenance,
   OptionStateEntry,
 } from '@/src/features/mindmap/types';
-import type { CoordMap } from '@/src/features/design-space/types';
+import type { CoordMap, GenerationTrail } from '@/src/features/design-space/types';
 import { candidateChoiceRows } from '@/src/features/design-space/candidate-utils';
+import {
+  computeExplorationStats,
+  formatExplorationStats,
+} from '@/src/features/design-space/exploration-stats';
 
 export interface ExplorationSnapshot {
   nodes: ReadonlyArray<MindmapNode>;
@@ -19,6 +23,8 @@ export interface ExplorationSnapshot {
   candidates: Readonly<Record<string, DesignCandidate>>;
   provenance: Readonly<Record<string, NodeProvenance>>;
   coords: Readonly<CoordMap>;
+  discovered: Readonly<Record<string, GenerationTrail>>;
+  activeCandidateId: string | null;
 }
 
 export function buildExplorationMarkdown(snapshot: ExplorationSnapshot): string {
@@ -36,6 +42,8 @@ export function buildExplorationMarkdown(snapshot: ExplorationSnapshot): string 
   lines.push(`# Design-Space Exploration`);
   lines.push('');
   lines.push(`Exported: ${new Date().toISOString()}`);
+  lines.push('');
+  lines.push(`**Stats:** ${formatExplorationStats(computeExplorationStats(snapshot))}`);
   lines.push('');
 
   lines.push('## Taxonomy');
@@ -106,8 +114,12 @@ export function buildExplorationMarkdown(snapshot: ExplorationSnapshot): string 
   return lines.join('\n');
 }
 
-export function downloadTextFile(filename: string, content: string): void {
-  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+export function downloadTextFile(
+  filename: string,
+  content: string,
+  mime = 'text/markdown;charset=utf-8'
+): void {
+  const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;

@@ -186,8 +186,7 @@ export function SimpleMindMap({
     (mind.map as any).addEventListener('click', handleMapClick);
 
     // Sync structural edits (add/delete/rename/move) → React nodes state
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mind.bus.addListener('operation', (_op: any) => {
+    mind.bus.addListener('operation', () => {
       skipRefreshRef.current = true;
       const newNodes = mindElixirDataToNodes(mind.getData());
       onDataChangeRef.current?.(newNodes);

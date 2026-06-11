@@ -12,6 +12,7 @@ Next.js 16 frontend. React 19, Bun, TanStack Query, Zustand.
 | `bun build` | Production build |
 | `bun start` | Production server |
 | `bun lint` | ESLint |
+| `bun test src` | Unit tests (bun:test) — tree-utils, candidate-utils, stats, session-io, export, store invariants |
 
 ---
 
@@ -30,12 +31,19 @@ Next.js 16 frontend. React 19, Bun, TanStack Query, Zustand.
 | Dialog | `src/features/mindmap/components/generate-taxonomy-dialog.tsx` | Taxonomy generation form (project overview, reasoning, mode) |
 | Data | `src/features/mindmap/data/schema-mindmap-data.ts` | Static initial taxonomy + `taxonomyToMindmapNodes()` converter |
 | Page | `src/app/mindmap/page.tsx` | Main orchestrator — wires store, hooks, components; Mind Map / Design Space / Perspectives view toggle + Similarity/Relevance-lens mode toggle |
-| Design space — surface | `src/components/design-space/design-space-surface.tsx` | SVG lattice: corpus glyphs (inspectable), node dots (confidence-dashed), candidate stars, collision badges + chooser, zoom-faded density heat, trustworthiness legend, cancel button; **relevance-lens painting** (single-hue amber ramp, anchor-faded nodes, "relative" legend) |
-| Design space — axes view | `src/components/design-space/axes-view.tsx` | "Perspectives": bipolar scatter on designer-chosen aspect/option poles — exact cosine scores, quadrant density shading, rug ticks, pole labels, axis-quality warnings (pole similarity, axis correlation), clip-dashed items. Read-only v1 |
-| Design space — candidates | `src/components/design-space/candidate-panel.tsx`, `compare-candidates-dialog.tsx` | Compose one option per aspect; precedents for the composition; compare; export |
+| Design space — surface | `src/components/design-space/design-space-surface.tsx` | SVG lattice: corpus glyphs (inspectable), node dots (confidence-dashed, **fill strength = corpus support**, placed amid their top-5 precedents — Part 11), candidate stars, collision badges + chooser, zoom-faded density heat, trustworthiness legend, cancel button; **relevance-lens painting** (cool-to-warm ramp, anchor-faded nodes, "relative" legend) |
+| Design space — examine | `src/components/design-space/examine-view.tsx` | "Perspectives", revamped (Part 10): the **alignment instrument** — concept↔commitments agreement headline, consistency strips (chosen option ↔ data-picked strongest alternative, "leans" badges), persisted rubric strips, percentile sentences, redundancy warnings; entered via the candidate panel's **Examine** |
+| Design space — axes view | `src/components/design-space/axes-view.tsx` | The "Cross two metrics" drill-down tab inside Perspectives: bipolar scatter on designer-chosen aspect/option poles — exact cosine scores, quadrant density shading, axis-quality warnings, clip-dashed items |
+| Design space — candidates | `src/components/design-space/candidate-panel.tsx`, `compare-candidates-dialog.tsx` | **Dual-layer candidates (Part 10):** choices (commitments) + BRIEF (identity; textarea + LLM "Draft from choices"). The brief drives the star, precedents, and lens; brief revisions leave a trail on the map. Compare; export |
+| Examine utils | `src/features/design-space/examine-utils.ts` | Pure strip helpers: consistency/rubric metric defs, corpus percentile — unit-tested |
 | Design space — hooks | `src/features/design-space/hooks/` | `use-surface-query` (gated on view), `use-locate-nodes`, `use-generate-at-mutation` (sends coords + AbortSignal), `use-corpus-project`, `use-candidate-precedents`, `use-relevance-query` (lens), `use-axes-query`, `use-pan-zoom` (shared canvas grammar) |
 | Design space — utils/types | `src/features/design-space/candidate-utils.ts`, `types.ts` | Candidate text composition + hand-written projection payload types (incl. axes) |
 | Shared interactions | `src/lib/view-interactions.ts`, `src/lib/svg-glyphs.ts` | One zoom factor/range for ALL canvases (the mind map mirrors it via mind-elixir `handleWheel` + `mouseSelectionButton: 2`); shared star glyph |
+| Tree utils | `src/features/mindmap/tree-utils.ts` | Pure tree ops (find/insert/collect/unique-ids) — extracted from the page, unit-tested |
+| Gap preview (E1) | `use-peek-mutation.ts` + popover in the surface | Click empty cell → seeds/parent-aspect/nearby preview FIRST; generation commits from the popover only |
+| Exploration stats (E5) | `src/features/design-space/exploration-stats.ts` | Pure stats (options, generated, rejected, chosen aspects, cells, candidate diversity) — UI strip + export + study instrument |
+| Session I/O | `src/lib/session-io.ts` + navigator Save/Load | Full exploration state as versioned JSON (capture, crash recovery, sharing); `restoreSession` store action |
+| Usage counters | store `usage` + `trackUsage` | Feature-usage instrumentation; included in session files |
 | Export | `src/lib/export-exploration.ts` | Markdown exploration record (taxonomy + states, candidates, provenance) |
 
 ---
@@ -58,10 +66,10 @@ Next.js 16 frontend. React 19, Bun, TanStack Query, Zustand.
 ### Design Space ⇄ Mind Map (two views, one selection)
 1. Top-center toggle switches `view` between `'map'` and `'space'` — both read the same `nodes` + `selection` (selection carries `nodeId` for exact identity).
 2. `useSurfaceQuery` loads the corpus background on first visit to the space view (`GET /api/projection/surface`; cached forever). The legend shows the layout's **trustworthiness**.
-3. On `nodes` change, missing nodes are embedded + placed via `POST /api/projection/locate` (best-effort). Each located point carries a **placement confidence** (dashed dot when low). Coords persist in the store; renames drop the stale coord so the node re-locates.
+3. On `nodes` change, nodes are embedded + placed via `POST /api/projection/locate` (best-effort; embeddings are register-corrected backend-side when the map is fitted). Placement is **evidence-anchored** (Part 11): a node sits at the weighted centroid of its top-5 corpus precedents — the same anchors behind its **corpus support** percentile (fill strength + tooltip) — so position and evidence tell one story and nothing lands outside the map. A dashed dot marks low **placement confidence** (the 2D neighbourhood disagrees with the true one — e.g. spread anchors). Coords persist in the store and render instantly, but **every node re-locates once per session** so values cached under an older calibration (register-map refit, placement change) refresh on the first space-view visit; renames drop the stale coord immediately.
 4. Clicking an **empty** lattice cell → `useGenerateAtMutation` (`POST /api/projection/generate-at`, async job, cancellable). The backend brackets the gap with seed projects, derives the **parent aspect from the click**, and returns options **with descriptions, coordinates, and drift**. Seeds/target are recorded as per-node **provenance** (chips in the Context panel).
-5. Clicking a **corpus diamond** opens that real project in the Related Projects panel. Clicking a **node** dot updates `selection`; co-located nodes get a count badge + chooser popover.
-6. **Candidates**: choose one option per aspect (Context panel button) → the composition is embedded and drawn as a **star**, with its closest real precedents in the Candidate panel; compare and export from there. See [`../DESIGN-SPACE-VIZ.md`](../DESIGN-SPACE-VIZ.md), [`../DESIGN-SPACE-ITERATION-PLAN.md`](../DESIGN-SPACE-ITERATION-PLAN.md), and [`../DESIGN-SPACE-TESTING.md`](../DESIGN-SPACE-TESTING.md).
+5. Clicking a **corpus diamond** opens that real project pinned at the top of the Related Projects panel; the pin releases on the next node selection (otherwise it would shadow every later node's results as a stuck first entry). Clicking a **node** dot updates `selection`; co-located nodes get a count badge + chooser popover.
+6. **Candidates**: choose one option per aspect (Context panel button) → the composition is embedded and drawn as a **star**, with its closest real precedents in the Candidate panel; compare and export from there. See [`DESIGN-SPACE-VIZ.md`](../documentations/DESIGN-SPACE-VIZ.md), [`DESIGN-SPACE-ITERATION-PLAN.md`](../documentations/DESIGN-SPACE-ITERATION-PLAN.md), and [`DESIGN-SPACE-TESTING.md`](../documentations/DESIGN-SPACE-TESTING.md).
 
 ### Placeholder filter
 The backend returns `{ Name: "Relevant projects will appear here" }` when Supabase has no matches. The page filters this out before passing `relatedProjects` to the generate-nodes call.

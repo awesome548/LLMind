@@ -10,7 +10,7 @@ import type {
 } from '@/src/features/mindmap/types';
 import {
   candidateCoordKey,
-  composeCandidateText,
+  candidateEmbeddingText,
   indexNodesById,
   listAspects,
 } from '@/src/features/design-space/candidate-utils';
@@ -135,7 +135,8 @@ export function AxesView({
       if (text) items.push({ node_id: id, text });
     }
     for (const candidate of Object.values(candidates)) {
-      const text = composeCandidateText(candidate, nodes, descriptionByTopic, descriptionById);
+      // Brief-first (Part 10): the star is the design, not the choice list.
+      const text = candidateEmbeddingText(candidate, nodes, descriptionByTopic, descriptionById);
       if (text) items.push({ node_id: candidateCoordKey(candidate.id), text });
     }
     const xa = poleText(config.x.poleAId);

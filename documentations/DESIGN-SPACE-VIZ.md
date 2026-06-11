@@ -79,7 +79,7 @@ These are the load-bearing constraints. Most of the design follows from them.
 
 ### 3.1 Coordinate stability → a persisted "projection model"
 
-**Problem.** UMAP is non-parametric and stochastic. `umap_reduce` ([`pipeline/ml.py`](llmind-python/pipeline/ml.py)) currently calls `reducer.fit_transform(X)` on whatever batch it gets, and `normalize_to_unit_interval` normalizes by that batch's min/max. Both are batch-dependent → no stability.
+**Problem.** UMAP is non-parametric and stochastic. `umap_reduce` ([`pipeline/ml.py`](../llmind-python/pipeline/ml.py)) currently calls `reducer.fit_transform(X)` on whatever batch it gets, and `normalize_to_unit_interval` normalizes by that batch's min/max. Both are batch-dependent → no stability.
 
 **Decision.** Introduce a **projection artifact** fit once on the corpus and persisted to disk:
 
@@ -111,7 +111,7 @@ This is the single keystone change. Everything else depends on it.
 
 1. Map the cell center back to continuous `(x, y)`.
 2. Find the *k* nearest **real** entities by 2D distance — both corpus projects and existing taxonomy nodes.
-3. Feed those neighbors as the seed context into the existing generation flow ([`generate_nodes_from_related_projects`](llmind-python/backend/related_projects/service.py)), with an added instruction: *"propose a node that sits between these neighbors yet is distinct from them — fill the gap."*
+3. Feed those neighbors as the seed context into the existing generation flow ([`generate_nodes_from_related_projects`](../llmind-python/backend/related_projects/service.py)), with an added instruction: *"propose a node that sits between these neighbors yet is distinct from them — fill the gap."*
 4. The new node is embedded → `transform_points` → lands at its true coordinate (which may differ from the clicked cell; see Q1).
 5. The node is inserted into the mind map (child of the current focus branch) **and** lit up on the surface — same `node_id`, both views.
 
@@ -121,7 +121,7 @@ This reuses the existing retrieval-augmented node generation almost verbatim; th
 
 ### 3.4 Bidirectional sync (the "two sides of one coin")
 
-The existing Zustand store ([`src/store/mindmap-store.ts`](llmind-web/src/store/mindmap-store.ts)) already persists selection, nodes, and taxonomy. Make it the shared source of truth:
+The existing Zustand store ([`src/store/mindmap-store.ts`](../llmind-web/src/store/mindmap-store.ts)) already persists selection, nodes, and taxonomy. Make it the shared source of truth:
 
 - Add `coords: Record<node_id, {x,y}>` and `selectedEntityId` to the store.
 - Mind-map `onSelect` and surface `onDotSelect` both write `selectedEntityId`.
@@ -155,11 +155,11 @@ Backend persists the reference/background (§3.1). Taxonomy node points are comp
 
 | File | Change |
 |---|---|
-| [`pipeline/ml.py`](llmind-python/pipeline/ml.py) | Add `fit_projection(X, dims=2)` and `transform_points(X)`; refactor `umap_reduce` to share the UMAP/PCA construction. Persist/load via `joblib`. Normalize with persisted bounds. |
-| [`database_pipeline.py`](llmind-python/database_pipeline.py) | New CLI command `project fit` → fits on corpus embeddings, writes `data/projection/*`. New `project corpus` → precomputes `corpus_points.json` (+ density). |
+| [`pipeline/ml.py`](../llmind-python/pipeline/ml.py) | Add `fit_projection(X, dims=2)` and `transform_points(X)`; refactor `umap_reduce` to share the UMAP/PCA construction. Persist/load via `joblib`. Normalize with persisted bounds. |
+| [`database_pipeline.py`](../llmind-python/database_pipeline.py) | New CLI command `project fit` → fits on corpus embeddings, writes `data/projection/*`. New `project corpus` → precomputes `corpus_points.json` (+ density). |
 | `backend/projection/` (new) | Router + service. Endpoints below. |
-| [`backend/related_projects/service.py`](llmind-python/backend/related_projects/service.py) | Add `nearest_entities(x, y, k)` (spatial) and a thin wrapper that injects spatial neighbors + the "fill the gap" instruction into the existing node-generation path. |
-| [`backend/main.py`](llmind-python/backend/main.py) | Mount the new projection router. |
+| [`backend/related_projects/service.py`](../llmind-python/backend/related_projects/service.py) | Add `nearest_entities(x, y, k)` (spatial) and a thin wrapper that injects spatial neighbors + the "fill the gap" instruction into the existing node-generation path. |
+| [`backend/main.py`](../llmind-python/backend/main.py) | Mount the new projection router. |
 
 ### New endpoints
 
@@ -175,12 +175,12 @@ Backend persists the reference/background (§3.1). Taxonomy node points are comp
 
 | Area | Change |
 |---|---|
-| Store ([`mindmap-store.ts`](llmind-web/src/store/mindmap-store.ts)) | Add `coords`, `selectedEntityId`, `surface` (background); actions to merge coords and set selection. |
+| Store ([`mindmap-store.ts`](../llmind-web/src/store/mindmap-store.ts)) | Add `coords`, `selectedEntityId`, `surface` (background); actions to merge coords and set selection. |
 | New component `DesignSpaceSurface` | Renders the lattice + dots; handles dot selection and empty-cell generation. |
 | New hook `use-surface-query` | Fetches `/api/projection/surface` once. |
 | New hook `use-generate-at-mutation` | Wraps `/api/projection/generate-at`; on success merges nodes + coords (reuse insertion logic). |
 | Existing taxonomy/node mutations | After success, also call `/api/projection/locate` for the new node ids and merge coords. |
-| Page ([`app/mindmap/page.tsx`](llmind-web/src/app/mindmap/page.tsx)) | Lay out mind map and surface side-by-side (or tabs); wire shared selection. |
+| Page ([`app/mindmap/page.tsx`](../llmind-web/src/app/mindmap/page.tsx)) | Lay out mind map and surface side-by-side (or tabs); wire shared selection. |
 
 **Renderer choice:** start with **Plotly** (`react-plotly.js`) — `scattergl` for dots, fast to stand up, trivial 2D→3D later, built-in hover/select. Graduate to **deck.gl** (`ScatterplotLayer` + GPU picking) only if dot counts or interactivity demand it. (react-three-fiber only if 3D orbit becomes the centerpiece.)
 

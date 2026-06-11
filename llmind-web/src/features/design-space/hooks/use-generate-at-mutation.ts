@@ -16,6 +16,9 @@ export interface GenerateAtParams {
   k?: number;
   mode?: 'openai' | 'vllm';
   reasoningEffort?: string;
+  /** The active candidate's brief — generation context (squiggle hypothesis;
+   * logged backend-side as `brief_context` for the A/B). */
+  brief?: string | null;
   /** Aborts the client-side wait (the backend job itself runs to completion). */
   signal?: AbortSignal;
 }
@@ -41,6 +44,7 @@ const generateAt = async (params: GenerateAtParams): Promise<GenerateAtResponse>
     // design space embeds and retrieves.
     mode: params.mode,
     reasoning_effort: params.reasoningEffort ?? 'medium',
+    brief: params.brief || undefined,
   };
 
   // Long generation runs as a backend job; poll to completion (keeps each

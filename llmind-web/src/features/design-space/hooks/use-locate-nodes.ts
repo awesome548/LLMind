@@ -42,6 +42,7 @@ const locateNodes = async (items: LocateItem[]): Promise<CoordMap> => {
         y: p.y,
         ...(p.z != null ? { z: p.z } : {}),
         ...(p.confidence != null ? { confidence: p.confidence } : {}),
+        ...(p.support != null ? { support: p.support } : {}),
       };
     }
     return coords;

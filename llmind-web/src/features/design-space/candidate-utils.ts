@@ -74,3 +74,69 @@ export function composeCandidateText(
 
 /** Coordinate-map key for a candidate's position in the design space. */
 export const candidateCoordKey = (candidateId: string) => `cand:${candidateId}`;
+
+/**
+ * The text that REPRESENTS the candidate in the embedding space: its brief
+ * (identity layer — register-native prose) when present, else the composed
+ * choices (Part 10 I0 rule 1). Drives the star, precedents, and the lens.
+ */
+export function candidateEmbeddingText(
+  candidate: DesignCandidate | null,
+  nodes: ReadonlyArray<MindmapNode>,
+  descriptionByTopic: Readonly<Record<string, string>> = {},
+  descriptionById: Readonly<Record<string, string>> = {}
+): string | null {
+  const brief = candidate?.brief?.trim();
+  if (brief) return brief;
+  return composeCandidateText(candidate, nodes, descriptionByTopic, descriptionById);
+}
+
+/** Option text exactly as the design space embeds it (topic + description). */
+export function optionEmbeddingText(
+  node: MindmapNode,
+  descriptionByTopic: Readonly<Record<string, string>>,
+  descriptionById: Readonly<Record<string, string>>
+): string {
+  const desc = descriptionById[node.id] ?? descriptionByTopic[node.topic] ?? '';
+  return desc ? `${node.topic}. ${desc}` : node.topic;
+}
+
+export interface AlignmentAspectInput {
+  aspect_id: string;
+  chosen: { id: string; text: string };
+  alternatives: Array<{ id: string; text: string }>;
+}
+
+/**
+ * The per-aspect rows the alignment endpoint scores: each chosen option plus
+ * its sibling alternatives (the competitors the brief might lean toward).
+ */
+export function candidateAlignmentAspects(
+  candidate: DesignCandidate | null,
+  nodes: ReadonlyArray<MindmapNode>,
+  descriptionByTopic: Readonly<Record<string, string>> = {},
+  descriptionById: Readonly<Record<string, string>> = {}
+): AlignmentAspectInput[] {
+  if (!candidate) return [];
+  const byId = indexNodesById(nodes);
+  const rows: AlignmentAspectInput[] = [];
+  for (const aspect of listAspects(nodes)) {
+    const chosenId = candidate.choices[aspect.id];
+    const chosen = chosenId ? byId.get(chosenId) : undefined;
+    if (!chosen) continue;
+    rows.push({
+      aspect_id: aspect.id,
+      chosen: {
+        id: chosen.id,
+        text: optionEmbeddingText(chosen, descriptionByTopic, descriptionById),
+      },
+      alternatives: (aspect.children ?? [])
+        .filter((option) => option.id !== chosen.id)
+        .map((option) => ({
+          id: option.id,
+          text: optionEmbeddingText(option, descriptionByTopic, descriptionById),
+        })),
+    });
+  }
+  return rows;
+}
