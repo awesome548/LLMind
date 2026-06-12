@@ -1316,3 +1316,30 @@ A + B before the study (they change what the study can measure: trust in
 the structure, and brief-scoped exploration), C if the study will probe
 fixation, then E. D and F are quick wins that can ride along with any of
 the above. G stays parked.
+
+### 13.3 Status (2026-06-13): L-A + modified L-B implemented
+
+The user chose **L-A** and **L-B-as-a-choice-popup**; both are live:
+
+- **L-A rationale layer:** `POST /api/corpus/rationale` (async keyed job;
+  one line per aspect grounded in the annotation counts; cached per
+  aspect+evidence under `data/projection/rationales/`) → "why:" lines under
+  the schema column headers + a labelled callout in the Context panel when
+  an aspect is selected. **Coverage probe:** `poorlyCoveredProjects` (pure
+  detection over annotation × surface universe, unit-tested) → strip chip
+  "N projects fit poorly — probe for a missing dimension" → `POST
+  /api/corpus/missing-aspect` → `kind: 'aspect'` proposal chips; accepting
+  inserts a new root-child aspect column (provenance `coverage`,
+  `option_added` event — timeline-visible). First live probe proposed
+  **"Spatial-Perceptual Integration"** from the 5 worst-covered projects;
+  accepted into the schema during verification.
+- **L-B (modified per user):** not the full first-class brief — a once-only
+  first-run CHOICE dialog on entering structure mode: **Start from your
+  brief** (opens the taxonomy dialog; its overview field is the brief —
+  the study's inform→filter layered model) vs **Discover first** (the
+  prebuilt space). Tracked `first_run_brief` / `first_run_discover`.
+- The study's paperwork is drafted: [USER-FLOWS.md](USER-FLOWS.md) (F0–F9
+  with per-flow instrumentation) and
+  [USER-TESTING-PLAN.md](USER-TESTING-PLAN.md) (VP-centred plan: 4 VP
+  components, 5 tasks, trust-delta probe, CSI, synthesis→investment).
+  L-C / L-D / L-E / L-F remain open.

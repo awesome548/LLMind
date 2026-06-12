@@ -20,6 +20,7 @@ and are polled via `src/lib/run-job.ts` (1.5 s interval, 5 min timeout,
 | `useAlignmentQuery(params)` | `POST /api/candidates/alignment` | Brief↔choices agreement + per-aspect leans (Examine headline/consistency strips); 5 min stale |
 | `useMetricsQuery(params)` | `POST /api/projection/metrics` | Corpus + brief scores along the strip metrics; response order = request order; 10 min stale |
 | `useAnnotationQuery(options, enabled)` | `POST /api/corpus/annotate` (job) | Corpus annotation (Part 12 A2): per-option counts + receipts; enabled in the Schema and Cross-tab views; key = option texts; `staleTime: Infinity` (server caches per option) |
+| `useRationaleQuery(aspects, nProjects, enabled)` | `POST /api/corpus/rationale` (job) | Part 13 L-A: per-aspect one-line "why this dimension", grounded in annotation counts — hence gated on the annotation; key = aspect names + counts; `staleTime: Infinity` (server caches per aspect+evidence) |
 
 ## Mutations
 
@@ -34,6 +35,7 @@ and are polled via `src/lib/run-job.ts` (1.5 s interval, 5 min timeout,
 | `useGenerateCellMutation` | `POST /api/corpus/generate-cell` (job) | B2: one concept into an empty cross-tab cell (pole-conditioned, half-matching exemplar seeds); kept results become candidate skeletons |
 | `useSteerMutation` | `POST /api/candidates/steer` (job) | B3: one steering move on the brief (metric / toward / away); returns revision + requested-vs-achieved measurement; ALWAYS shown as a veto card |
 | `useDraftReflectionMutation` | `POST /api/reflections/draft` (job) | C2: drafts the one-line rationale for an exploration event; the chip opens immediately and the draft fills only if the designer hasn't typed |
+| `useMissingAspectMutation` | `POST /api/corpus/missing-aspect` (job) | Part 13 L-A coverage probe: poorly-covered project ids + existing aspect names → ≤2 missing-dimension proposals; designer-triggered from the schema strip chip; results become `kind: 'aspect'` proposal chips |
 
 Regenerate the OpenAPI types after backend model changes (see FRONTEND.md);
 app code imports types from `src/types/api-aliases.ts`, never `openapi.ts`.

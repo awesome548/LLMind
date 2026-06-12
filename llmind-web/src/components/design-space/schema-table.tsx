@@ -10,7 +10,7 @@
 // drive the map's faceted fading (A3).
 
 import { useState } from 'react';
-import { Check, Filter, Minus, Plus, RotateCcw, Undo2, X } from 'lucide-react';
+import { Check, Filter, Lightbulb, Minus, Plus, RotateCcw, Undo2, X } from 'lucide-react';
 import { Button } from '@/src/components/ui/button';
 import type { SchemaColumn } from '@/src/features/design-space/schema-utils';
 import type { AnnotationResponse } from '@/src/features/design-space/hooks/use-annotation-query';
@@ -45,6 +45,12 @@ interface Props {
   /** Replay: announce the scrubbed position AT the table (Nielsen H1 — the
    * timeline strip alone is too far from where a click gets ignored). */
   replay?: { step: number; total: number; onLive: () => void } | null;
+  /** The rationale layer (Part 13 L-A): per-aspect one-line "why this
+   * dimension", grounded in the annotation evidence. */
+  rationales?: Readonly<Record<string, string>>;
+  /** The coverage probe (Part 13 L-A): N poorly-covered projects + the
+   * designer-triggered "what dimension is missing?" action. */
+  probe?: { count: number; running: boolean; error?: string | null; onRun: () => void } | null;
 }
 
 export function SchemaTable({
@@ -64,6 +70,8 @@ export function SchemaTable({
   readOnly = false,
   highlightIds,
   replay,
+  rationales,
+  probe,
 }: Props) {
   // Receipts popover: anchored to its cell (it pans with the sheet), but
   // FLIPPED toward the viewport center when the cell sits near an edge —
@@ -134,6 +142,23 @@ export function SchemaTable({
               facets active — map fades non-matching projects
             </span>
           )}
+          {!readOnly && probe && probe.count > 0 && (
+            <button
+              type="button"
+              onClick={probe.onRun}
+              disabled={probe.running}
+              title="Some real projects barely fit any option in this taxonomy. Ask what dimension they exemplify that the taxonomy misses — answers arrive as accept/dismiss suggestions."
+              className="flex items-center gap-1 rounded-full border border-amber-300 px-2 py-0.5 font-medium text-amber-700 transition-colors enabled:hover:bg-amber-500/10 disabled:opacity-60"
+            >
+              <Lightbulb className="h-3 w-3" />
+              {probe.running
+                ? 'probing for a missing dimension…'
+                : `${probe.count} project${probe.count === 1 ? ' fits' : 's fit'} poorly — probe for a missing dimension`}
+            </button>
+          )}
+          {!readOnly && probe?.error && !probe.running && (
+            <span className="text-red-600">{probe.error} — click to retry</span>
+          )}
         </div>
       </div>
 
@@ -160,6 +185,17 @@ export function SchemaTable({
           <div key={col.id} className="mb-4 break-inside-avoid rounded-xl border bg-card">
             <div className="border-b px-3 py-2" title={col.desc}>
               <p className="text-sm font-semibold">{col.name}</p>
+              {/* The rationale layer: the system's why for this dimension,
+                  grounded in annotation evidence — the study's "why these
+                  seven?" answered where the question arises. */}
+              {rationales?.[col.id] && (
+                <p
+                  className="mt-0.5 line-clamp-2 text-[10px] italic leading-snug text-muted-foreground"
+                  title={`Why this dimension (AI, from corpus evidence): ${rationales[col.id]}`}
+                >
+                  why: {rationales[col.id]}
+                </p>
+              )}
             </div>
             <ul className="p-2">
               {col.options.map((opt) => {

@@ -137,6 +137,29 @@ export function halfMatchingExemplars(
 }
 
 /**
+ * The coverage probe's detection half (Part 13 L-A) — pure set arithmetic:
+ * corpus projects the taxonomy describes POORLY, i.e. annotated with at most
+ * `maxCoverage` options across the whole schema. These are the candidates
+ * for "a dimension may be missing" (the LLM half names what they exemplify).
+ */
+export function poorlyCoveredProjects(
+  options: Readonly<Record<string, AnnotationOptionRecord>>,
+  universe: ReadonlyArray<{ id: string; name: string }>,
+  maxCoverage = 1,
+  cap = 5
+): Array<{ id: string; name: string; coverage: number }> {
+  const coverage = new Map<string, number>();
+  for (const rec of Object.values(options)) {
+    for (const id of rec.project_ids) coverage.set(id, (coverage.get(id) ?? 0) + 1);
+  }
+  return universe
+    .map((p) => ({ id: p.id, name: p.name, coverage: coverage.get(p.id) ?? 0 }))
+    .filter((p) => p.coverage <= maxCoverage)
+    .sort((a, b) => a.coverage - b.coverage || a.name.localeCompare(b.name))
+    .slice(0, cap);
+}
+
+/**
  * Faceted corpus matching (Halskov's ± search): a project matches when it is
  * annotated with EVERY included option and NO excluded option. Returns null
  * when no facets are active (= no fading).

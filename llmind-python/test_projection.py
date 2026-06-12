@@ -387,6 +387,46 @@ def test_reflection_parse() -> None:
     check("reflect: caps at 200 chars", len(parse_reflection("x" * 400) or "") == 200)
 
 
+def test_rationale_helpers() -> None:
+    """Part 13 L-A pure parts: cache hashes + aspect-proposal parsing."""
+    from backend.corpus import rationale as rat
+
+    opts = [{"name": "LED", "count": 9}, {"name": "Projection", "count": 5}]
+    h1 = rat.aspect_content_hash("Display Technology", "How content is shown.", opts)
+    check("rationale: aspect hash is stable",
+          h1 == rat.aspect_content_hash("Display Technology", "How content is shown.", opts))
+    check("rationale: aspect hash tracks count changes (new evidence = new rationale)",
+          h1 != rat.aspect_content_hash(
+              "Display Technology", "How content is shown.",
+              [{"name": "LED", "count": 10}, {"name": "Projection", "count": 5}]))
+    check("rationale: set hash is order-independent",
+          rat.rationale_set_hash([
+              {"name": "A", "desc": "", "options": []},
+              {"name": "B", "desc": "", "options": opts},
+          ]) == rat.rationale_set_hash([
+              {"name": "B", "desc": "", "options": opts},
+              {"name": "A", "desc": "", "options": []},
+          ]))
+
+    check("probe: parses proposals and keeps reason",
+          rat.parse_aspect_proposals(
+              '{"name": "Materiality", "desc": "Physical media beyond pixels.", "reason": "Fog Garden"}',
+              "", ["Display Technology"])
+          == [{"name": "Materiality", "desc": "Physical media beyond pixels.",
+               "reason": "Fog Garden"}])
+    check("probe: drops duplicates of existing aspects (case-insensitive)",
+          rat.parse_aspect_proposals(
+              '{"name": "display technology", "desc": "x"}', "", ["Display Technology"]) == [])
+    check("probe: drops nameless/descless objects and caps at two",
+          [p["name"] for p in rat.parse_aspect_proposals(
+              '{"name": "A", "desc": "a"} {"name": "", "desc": "x"} '
+              '{"name": "B", "desc": "b"} {"name": "C", "desc": "c"}', "", [])] == ["A", "B"])
+    check("probe: salvages from the reasoning tail when content is empty",
+          rat.parse_aspect_proposals(
+              "", 'deliberation... I propose {"name": "Sound", "desc": "Acoustic media."}', [])
+          == [{"name": "Sound", "desc": "Acoustic media.", "reason": ""}])
+
+
 def test_jobs_dedup() -> None:
     """submit_keyed: concurrent identical requests share one pending job."""
     import threading
@@ -848,6 +888,7 @@ def main() -> int:
     test_corpus_support()
     test_annotation_helpers()
     test_reflection_parse()
+    test_rationale_helpers()
     test_jobs_dedup()
     test_steer_helpers()
     test_candidate_alignment()

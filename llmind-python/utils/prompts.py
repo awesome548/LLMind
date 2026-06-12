@@ -211,6 +211,54 @@ INSTRUCTIONS:
 """
 
 
+# Part 13 L-A: the rationale layer — answer the study's "why these seven?"
+# at the structure level. One line per aspect, grounded in the annotation
+# evidence (counts), shown as explanation in the schema/context panels.
+# Evidence framing, never a verdict.
+RATIONALE_PROMPT = """TASK:
+A design-space taxonomy for media architecture includes this aspect (dimension):
+
+{{ASPECT_NAME}}: {{ASPECT_DESC}}
+
+Its options, with how many of the {{N_PROJECTS}} real corpus projects exemplify each:
+{{OPTIONS}}
+
+Write the ONE-LINE rationale for why this dimension belongs in the design space.
+
+INSTRUCTIONS:
+- Ground it in the evidence above: what real variation does this dimension
+  separate, judging by the spread of counts?
+- Plain language a designer reads in a tooltip, under 25 words.
+- Respond with ONLY the sentence. No preamble, no quotes.
+"""
+
+
+# Part 13 L-A: the coverage probe — corpus projects the current taxonomy
+# describes poorly suggest a MISSING dimension (the deferred C1 alignment
+# emitter, generalised from briefs to the whole corpus).
+MISSING_ASPECT_PROMPT = """TASK:
+A design-space taxonomy for media architecture currently has these aspects
+(dimensions):
+{{ASPECTS}}
+
+These real corpus projects are POORLY described by that taxonomy — few or none
+of its options fit them:
+{{PROJECTS}}
+
+What dimension do these projects exemplify that the taxonomy does not capture?
+
+INSTRUCTIONS:
+- Propose ONE new aspect (two only if clearly distinct) that would let the
+  taxonomy describe these projects.
+- Do NOT duplicate or rename an existing aspect.
+- For each proposal respond with a JSON object on its own line:
+  {"name": "...", "desc": "...", "reason": "..."}
+  name: 2-5 words. desc: one sentence defining the dimension. reason: which
+  of the listed projects motivated it.
+- No other text.
+"""
+
+
 # Version tag logged with every generate-at call so prompt/seeding variants can
 # be compared in data/projection/generate_log.jsonl. Bump when the prompt or
 # the seeding strategy changes behaviour.

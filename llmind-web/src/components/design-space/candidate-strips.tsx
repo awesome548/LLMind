@@ -1,7 +1,7 @@
 'use client';
 
 import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { MindmapNode } from '@/src/features/mindmap/types';
 import { Button } from '@/src/components/ui/button';
 import {
@@ -40,23 +40,40 @@ const xOf = (score: number) => ((score + 1) / 2) * TRACK_W;
 const pctOf = (score: number) => `${(((score + 1) / 2) * 100).toFixed(2)}%`;
 
 /** One metric strip: corpus rug + the candidate's brief as a star on the line.
- * With ``onRailClick`` the track is a STEERING RAIL (Part 12 B3): clicking it
- * sets a target score; ``railTarget`` renders the requested ghost. */
+ * With ``onRailChange`` the track is a STEERING RAIL (Part 12 B3): click OR
+ * drag sets/moves the target score; ``railTarget`` renders the requested
+ * ghost, and the Steer/Cancel controls live INSIDE this card so target and
+ * commitment read as one object. */
 function StripRow({
   def,
   result,
   onRemove,
   railTarget,
-  onRailClick,
+  onRailChange,
+  steering,
+  onSteerCommit,
+  onRailCancel,
 }: {
   def: MetricDef;
   result: MetricResult | undefined;
   onRemove?: () => void;
   railTarget?: number | null;
-  onRailClick?: (score: number) => void;
+  onRailChange?: (score: number) => void;
+  steering?: boolean;
+  onSteerCommit?: () => void;
+  onRailCancel?: () => void;
 }) {
   const item = result?.items[0];
   const pct = result && item ? percentileOf(result.corpus, item.score) : null;
+  // Drag-to-aim: pointer capture keeps the ghost following even when the
+  // cursor leaves the row mid-drag. A ref, not state — it drives no render,
+  // and a ref stays correct when down/move land in the same frame.
+  const draggingRef = useRef(false);
+  const scoreAt = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const fraction = (e.clientX - rect.left) / rect.width;
+    return Math.max(-1, Math.min(1, fraction * 2 - 1));
+  };
   return (
     <div className="rounded-xl border bg-background/80 px-4 py-3">
       <div className="flex items-center justify-between gap-2">
@@ -90,17 +107,35 @@ function StripRow({
       {result && item ? (
         <>
           <div
-            className={`relative mt-2 h-8 ${onRailClick ? 'cursor-crosshair' : ''}`}
-            onClick={
-              onRailClick
+            className={`relative mt-2 h-8 touch-none ${onRailChange ? 'cursor-crosshair' : ''}`}
+            onPointerDown={
+              onRailChange
                 ? (e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const fraction = (e.clientX - rect.left) / rect.width;
-                    onRailClick(Math.max(-1, Math.min(1, fraction * 2 - 1)));
+                    try {
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                    } catch {
+                      // A pointer released between event and capture (or a
+                      // synthetic event) — the drag still works inside the row.
+                    }
+                    draggingRef.current = true;
+                    onRailChange(scoreAt(e));
                   }
                 : undefined
             }
-            title={onRailClick ? 'Click the rail to steer the brief toward that score' : undefined}
+            onPointerMove={
+              onRailChange ? (e) => draggingRef.current && onRailChange(scoreAt(e)) : undefined
+            }
+            onPointerUp={() => {
+              draggingRef.current = false;
+            }}
+            onPointerCancel={() => {
+              draggingRef.current = false;
+            }}
+            title={
+              onRailChange
+                ? 'Click or drag along the rail to aim the brief at a score'
+                : undefined
+            }
           >
             {/* Track + corpus rug: lines only, so non-uniform stretch is safe. */}
             <svg
@@ -122,18 +157,25 @@ function StripRow({
                 />
               ))}
             </svg>
-            {/* The candidate's star: an undistorted overlay positioned by %. */}
+            {/* The candidate's star: an undistorted overlay positioned by %.
+                Clipped scores render at reduced opacity with a tooltip — a
+                dashed outline at this size (20px) breaks into dots that read
+                as a rendering artifact, not as a meaning. Position clamps to
+                the rail so an out-of-range score can't hang off the row. */}
             <svg
               viewBox="0 0 24 24"
               className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2"
-              style={{ left: pctOf(item.score) }}
+              style={{ left: pctOf(Math.max(-1, Math.min(1, item.score))) }}
+              opacity={item.clipped ? 0.7 : 1}
             >
+              {item.clipped && (
+                <title>outside the corpus range — shown at the rail edge</title>
+              )}
               <path
                 d={starPath(12, 12, 10)}
                 fill={CANDIDATE_COLOR}
                 stroke="white"
                 strokeWidth={1.5}
-                strokeDasharray={item.clipped ? '3 2' : undefined}
               />
             </svg>
             {/* The requested ghost: where the designer asked the brief to go. */}
@@ -157,6 +199,34 @@ function StripRow({
             <span className="truncate">← {def.poleBLabel}</span>
             <span className="truncate text-right">{def.poleALabel} →</span>
           </div>
+          {/* The aimed target's controls live IN the card, right under the
+              rail they refer to — target and commitment as one object. */}
+          {railTarget != null &&
+            (steering ? (
+              <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                revising in language, then measuring the move…
+              </p>
+            ) : (
+              <div className="mt-1.5 flex items-center gap-1.5 rounded-lg border border-dashed border-violet-300 bg-violet-500/5 px-2 py-1 text-[11px]">
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                  steer the brief to {railTarget >= 0 ? '+' : ''}
+                  {railTarget.toFixed(2)} (toward{' '}
+                  {railTarget >= 0 ? def.poleALabel : def.poleBLabel})
+                </span>
+                <Button size="sm" className="h-5 shrink-0 px-2 text-[10px]" onClick={onSteerCommit}>
+                  Steer
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-5 shrink-0 px-2 text-[10px]"
+                  onClick={onRailCancel}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ))}
           <p
             className="mt-0.5 text-[10px] text-muted-foreground"
             title="A percentile within the background corpus of real projects, not an absolute scale — the tick marks above are those projects' own scores"
@@ -392,35 +462,13 @@ export function CandidateStrips({
             result={metrics?.metrics[i]}
             onRemove={def.rubricId ? () => removeRubricMetric(def.rubricId!) : undefined}
             railTarget={rail?.key === def.key ? rail.target : null}
-            onRailClick={
+            onRailChange={
               steering ? undefined : (score) => setRail({ key: def.key, target: score })
             }
+            steering={steering && rail?.key === def.key}
+            onSteerCommit={() => rail && handleSteer(def, rail.target)}
+            onRailCancel={() => setRail(null)}
           />
-          {rail?.key === def.key && !steering && (
-            <div className="flex items-center gap-1.5 rounded-lg border border-dashed px-3 py-1.5 text-[11px]">
-              <span className="text-muted-foreground">
-                steer the brief to {rail.target >= 0 ? '+' : ''}
-                {rail.target.toFixed(2)} (toward {rail.target >= 0 ? def.poleALabel : def.poleBLabel})
-              </span>
-              <Button size="sm" className="h-5 px-2 text-[10px]" onClick={() => handleSteer(def, rail.target)}>
-                Steer
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-5 px-2 text-[10px]"
-                onClick={() => setRail(null)}
-              >
-                Cancel
-              </Button>
-            </div>
-          )}
-          {steering && rail?.key === def.key && (
-            <p className="flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              revising in language, then measuring the move…
-            </p>
-          )}
           {steerOutcome?.key === def.key && steerOutcome.candidateId === active?.id && (
             <SteerResultCard
               result={steerOutcome.result}

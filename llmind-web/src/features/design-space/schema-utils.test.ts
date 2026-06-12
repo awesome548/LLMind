@@ -4,6 +4,7 @@ import {
   buildSchemaColumns,
   computeFacetMatches,
   halfMatchingExemplars,
+  poorlyCoveredProjects,
 } from './schema-utils';
 import type { MindmapNode } from '@/src/features/mindmap/types';
 
@@ -132,5 +133,37 @@ describe('halfMatchingExemplars', () => {
   test('missing records yield what exists', () => {
     expect(halfMatchingExemplars(undefined, recB)).toEqual(['p2', 'p3', 'p4']);
     expect(halfMatchingExemplars(undefined, undefined)).toEqual([]);
+  });
+});
+
+describe('poorlyCoveredProjects', () => {
+  const ann = {
+    led: { count: 2, project_ids: ['p1', 'p2'], projects: [] },
+    plaza: { count: 2, project_ids: ['p2', 'p3'], projects: [] },
+  };
+  const universe = [
+    { id: 'p1', name: 'Beta Wall' },
+    { id: 'p2', name: 'Core Plaza' },
+    { id: 'p3', name: 'Arc Light' },
+    { id: 'p4', name: 'Drift Garden' },
+  ];
+
+  test('never-annotated projects rank first, then by name', () => {
+    expect(poorlyCoveredProjects(ann, universe)).toEqual([
+      { id: 'p4', name: 'Drift Garden', coverage: 0 },
+      { id: 'p3', name: 'Arc Light', coverage: 1 },
+      { id: 'p1', name: 'Beta Wall', coverage: 1 },
+    ]);
+  });
+
+  test('threshold and cap apply', () => {
+    expect(poorlyCoveredProjects(ann, universe, 0)).toEqual([
+      { id: 'p4', name: 'Drift Garden', coverage: 0 },
+    ]);
+    expect(poorlyCoveredProjects(ann, universe, 1, 2).map((p) => p.id)).toEqual(['p4', 'p3']);
+  });
+
+  test('well-covered corpus yields nothing', () => {
+    expect(poorlyCoveredProjects(ann, [{ id: 'p2', name: 'Core Plaza' }])).toEqual([]);
   });
 });

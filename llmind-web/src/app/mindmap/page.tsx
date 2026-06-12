@@ -48,8 +48,11 @@ import { SchemaTable } from '@/src/components/design-space/schema-table';
 import {
   buildSchemaColumns,
   computeFacetMatches,
+  poorlyCoveredProjects,
 } from '@/src/features/design-space/schema-utils';
 import { useAnnotationQuery } from '@/src/features/design-space/hooks/use-annotation-query';
+import { useRationaleQuery } from '@/src/features/design-space/hooks/use-rationale-query';
+import { useMissingAspectMutation } from '@/src/features/design-space/hooks/use-missing-aspect-mutation';
 import { CandidatePanel } from '@/src/components/design-space/candidate-panel';
 import { CompareCandidatesDialog } from '@/src/components/design-space/compare-candidates-dialog';
 import {
@@ -61,6 +64,13 @@ import type { CandidateMarker } from '@/src/components/design-space/design-space
 import type { CoordMap, GenerationTrail } from '@/src/features/design-space/types';
 import { Badge } from '@/src/components/ui/badge';
 import { Button } from '@/src/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/src/components/ui/dialog';
 import {
   Collapsible,
   CollapsibleContent,
@@ -164,6 +174,8 @@ export default function MindmapPage() {
   const selectTopic = useMindmapStore((state) => state.selectTopic);
   const taxonomy = useMindmapStore((state) => state.taxonomy);
   const setTaxonomy = useMindmapStore((state) => state.setTaxonomy);
+  const projectBrief = useMindmapStore((state) => state.projectBrief);
+  const setProjectBrief = useMindmapStore((state) => state.setProjectBrief);
   // The working tree + exploration state are persisted in the store so that
   // generated nodes, coordinates, and discovered cells survive a reload.
   const nodes = useMindmapStore((state) => state.nodes);
@@ -201,18 +213,21 @@ export default function MindmapPage() {
     lineage: [...INITIAL_SELECTION.lineage],
   });
   const [generateError, setGenerateError] = useState<string | null>(null);
-  // First-run helper: auto-open the taxonomy dialog only AFTER the persisted
-  // store has rehydrated. At first render `taxonomy` is still null even when
-  // one is persisted (the persist middleware hydrates asynchronously), which
-  // used to flash this dialog open on every reload. Offered ONCE (tracked in
-  // the persisted usage counters) — working with the default schema is a
-  // valid choice, not something to nag about on every load.
+  // First-run choice (Part 13 L-B, per the study's layered inform→filter
+  // model): brief-first ("write down what you're imagining" → a space scoped
+  // to it) or discover-first (explore the prebuilt space, generate later).
+  // Opens only AFTER the persisted store has rehydrated (at first render
+  // `taxonomy` is still null even when one is persisted — the persist
+  // middleware hydrates asynchronously, which used to flash dialogs open on
+  // every reload), and only ONCE (tracked in the persisted usage counters) —
+  // working with the default schema is a valid choice, not a nag target.
   const [taxonomyDialogOpen, setTaxonomyDialogOpen] = useState(false);
+  const [firstRunChoiceOpen, setFirstRunChoiceOpen] = useState(false);
   useEffect(() => {
     const openIfFirstRun = () => {
       const store = useMindmapStore.getState();
       if (!store.taxonomy && !store.usage['taxonomy_dialog_offered']) {
-        setTaxonomyDialogOpen(true);
+        setFirstRunChoiceOpen(true);
         store.trackUsage('taxonomy_dialog_offered');
       }
     };
@@ -299,8 +314,10 @@ export default function MindmapPage() {
   // A corpus project opened for inspection (design-space glyph / provenance chip).
   const [focusProjectId, setFocusProjectId] = useState<string | null>(null);
   const { data: focusProject } = useCorpusProjectQuery(focusProjectId);
-  // Fetched on first visit to the space view (cached forever afterwards).
-  const { data: surface } = useSurfaceQuery(view === 'space');
+  // Fetched on first visit to the space OR schema view (cached forever
+  // afterwards) — the schema's coverage probe needs the full project
+  // universe to find what the taxonomy never annotates.
+  const { data: surface } = useSurfaceQuery(view === 'space' || view === 'schema');
   const { mutateAsync: locateNodes } = useLocateNodesMutation();
   const { mutateAsync: generateAt, isPending: isGeneratingAt } = useGenerateAtMutation();
   const { mutateAsync: peekAt } = usePeekMutation();
@@ -321,10 +338,14 @@ export default function MindmapPage() {
   const CORPUS_SIMILARITY_FLOOR = 0.3;
 
   const handleTaxonomyGenerated = (
-    result: Parameters<typeof setTaxonomy>[0] & { corpus_similarity?: number | null }
+    result: Parameters<typeof setTaxonomy>[0] & { corpus_similarity?: number | null },
+    overview: string
   ) => {
     // setTaxonomy rebuilds the tree and wipes coords/discovered/provenance.
     setTaxonomy(result);
+    // The overview IS the project brief (Part 13 L-B) — persisted so "Edit
+    // Brief & Taxonomy" can reopen the dialog prefilled.
+    setProjectBrief(overview.trim());
     setSelection({ topic: INITIAL_SELECTION.topic, lineage: [...INITIAL_SELECTION.lineage] });
     setActiveLine(null);
     setPendingChoiceAspectId(null);
@@ -407,6 +428,44 @@ export default function MindmapPage() {
     isFetching: isAnnotating,
     error: annotationError,
   } = useAnnotationQuery(annotationInputs, view === 'schema' || view === 'crosstab');
+  // The rationale layer (Part 13 L-A): the system's one-line why per aspect,
+  // grounded in the annotation counts — hence gated on the annotation.
+  const rationaleAspects = useMemo(
+    () =>
+      schemaColumns.map((col) => ({
+        id: col.id,
+        name: col.name,
+        desc: col.desc,
+        options: col.options.map((o) => ({
+          name: o.name,
+          count: annotation?.options[o.id]?.count ?? 0,
+        })),
+      })),
+    [schemaColumns, annotation]
+  );
+  const { data: rationaleData } = useRationaleQuery(
+    rationaleAspects,
+    annotation?.meta.n_projects ?? 0,
+    view === 'schema' && Boolean(annotation)
+  );
+  // The selected aspect's why, for the Context panel (lineage root → aspect).
+  const selectedAspectRationale = useMemo(() => {
+    if (selection.lineage.length !== 2 || !rationaleData) return null;
+    const id = selection.nodeId ?? findNodeByLineage(nodes, [...selection.lineage])?.id;
+    return id ? rationaleData.rationales[id] || null : null;
+  }, [selection, rationaleData, nodes]);
+  // The coverage probe's detection half — pure set arithmetic: which real
+  // projects does the current taxonomy barely describe?
+  const poorlyCovered = useMemo(
+    () =>
+      annotation && surface
+        ? poorlyCoveredProjects(
+            annotation.options,
+            surface.points.map((p) => ({ id: p.id, name: p.name || '(untitled)' }))
+          )
+        : [],
+    [annotation, surface]
+  );
   const facetMatched = useMemo(() => {
     if (!annotation) return null;
     return computeFacetMatches(
@@ -483,16 +542,41 @@ export default function MindmapPage() {
     insertOptionNode(aspectId, name, desc, 'manual');
     trackUsage('schema_add_option');
   };
+  // Informing at the STRUCTURE level (Part 13 L-A): an accepted
+  // missing-dimension proposal becomes a new root-child aspect — an empty
+  // schema column the designer fills by hand or by generation. Same
+  // fresh-read discipline as insertOptionNode.
+  const insertAspectNode = (name: string, desc: string): boolean => {
+    const current = useMindmapStore.getState().nodes;
+    const root = current[0];
+    if (!root) return false;
+    if ((root.children ?? []).some((a) => a.topic.toLowerCase() === name.toLowerCase()))
+      return false;
+    const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const existing = new Set<string>();
+    collectIds(current, existing);
+    let id = base || `aspect-${existing.size}`;
+    for (let n = 2; existing.has(id); n++) id = `${base}-${n}`;
+    setNodes([
+      { ...root, children: [...(root.children ?? []), { id, topic: name, children: [] }] },
+      ...current.slice(1),
+    ]);
+    if (desc) mergeDescriptions({ [id]: desc });
+    recordProvenance({ [id]: { source: 'coverage', seedProjects: [], createdAt: Date.now() } });
+    recordEvent('option_added', `Added dimension "${name}" (coverage probe)`, [id]);
+    return true;
+  };
 
   // ── C1: informing-back proposals (transient — only ACCEPTED ones persist;
   // dismissals are EVENTS, so the timeline can resurface them) ───────────────
   const [proposals, setProposals] = useState<OptionProposal[]>([]);
   const enqueueProposals = useCallback(
     (
-      items: Array<{ text: string; desc?: string }>,
+      items: Array<{ text: string; desc?: string; evidence?: string }>,
       aspectId: string | null,
       evidence: string,
-      source: OptionProposal['source']
+      source: OptionProposal['source'],
+      kind: 'option' | 'aspect' = 'option'
     ) => {
       setProposals((prev) => {
         const next = [...prev];
@@ -507,11 +591,12 @@ export default function MindmapPage() {
             continue;
           next.push({
             id: `prop-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+            kind,
             aspectId,
             text,
             desc: item.desc ?? '',
             source,
-            evidence,
+            evidence: item.evidence ?? evidence,
           });
         }
         return next.slice(-4); // keep only the NEWEST few — chips, not a backlog
@@ -527,7 +612,15 @@ export default function MindmapPage() {
   const handleAcceptProposal = (proposal: OptionProposal, aspectId: string) => {
     // If the aspect vanished while the chip waited, the proposal is moot —
     // the chip clears either way, but nothing phantom is recorded.
-    const inserted = insertOptionNode(aspectId, proposal.text, proposal.desc, proposal.source);
+    const inserted =
+      proposal.kind === 'aspect'
+        ? insertAspectNode(proposal.text, proposal.desc)
+        : insertOptionNode(
+            aspectId,
+            proposal.text,
+            proposal.desc,
+            proposal.source === 'coverage' ? 'manual' : proposal.source
+          );
     setProposals((prev) => prev.filter((p) => p.id !== proposal.id));
     trackUsage(inserted ? 'proposal_accepted' : 'proposal_aspect_missing');
   };
@@ -559,6 +652,43 @@ export default function MindmapPage() {
     () => (nodes[0]?.children ?? []).map((a) => ({ id: a.id, name: a.topic })),
     [nodes]
   );
+
+  // The coverage probe's naming half (Part 13 L-A): ask what dimension the
+  // poorly-covered projects exemplify; answers ride the proposals channel.
+  const { mutateAsync: probeMissingAspect, isPending: probing } = useMissingAspectMutation();
+  const [probeError, setProbeError] = useState<string | null>(null);
+  const handleProbeMissingAspect = async () => {
+    if (poorlyCovered.length === 0 || aspectList.length === 0) return;
+    setProbeError(null);
+    trackUsage('coverage_probe');
+    try {
+      const result = await probeMissingAspect({
+        aspect_names: aspectList.map((a) => a.name),
+        project_ids: poorlyCovered.map((p) => p.id),
+      });
+      const names = poorlyCovered.map((p) => p.name);
+      const evidence = `the coverage probe (${names.slice(0, 3).join(', ')}${
+        names.length > 3 ? '…' : ''
+      } fit the taxonomy poorly)`;
+      if (result.proposals.length === 0) {
+        setProbeError('the probe found no missing dimension to name');
+        return;
+      }
+      enqueueProposals(
+        result.proposals.map((p) => ({
+          text: p.name,
+          desc: p.desc,
+          ...(p.reason ? { evidence: `${evidence} — ${p.reason}` } : {}),
+        })),
+        null,
+        evidence,
+        'coverage',
+        'aspect'
+      );
+    } catch (error) {
+      setProbeError(error instanceof Error ? error.message : 'probe failed');
+    }
+  };
 
   // B2: a kept cell idea becomes a candidate skeleton — committed to the two
   // options that named the gap, with the generated concept as its brief (the
@@ -1320,10 +1450,17 @@ export default function MindmapPage() {
             variant="outline"
             size="sm"
             onClick={() => setTaxonomyDialogOpen(true)}
+            title={
+              taxonomy
+                ? 'Edit your project brief and regenerate the design-space taxonomy (replaces the current space; exploration history survives in the timeline)'
+                : 'Describe your project and generate a design-space taxonomy from it'
+            }
             className="h-9 gap-2 whitespace-nowrap rounded-full px-5 text-xs font-bold shadow-sm transition-all hover:bg-accent hover:text-accent-foreground active:scale-95"
           >
             <Sparkles className="h-4 w-4 text-primary" />
-            Generate Taxonomy
+            {/* After the first brief+generation round the action is a REVISION
+                of the standing brief, not a fresh start (Part 13 L-B). */}
+            {taxonomy ? 'Edit Brief & Taxonomy' : 'Generate Taxonomy'}
           </Button>
           <Button
             type="button"
@@ -1429,6 +1566,19 @@ export default function MindmapPage() {
                     <div className="space-y-1 text-sm leading-relaxed">
                       <p className="text-muted-foreground">{description}</p>
                     </div>
+                  ) : null}
+
+                  {/* The rationale layer (Part 13 L-A): the system's why for
+                      this dimension — labelled as AI explanation from corpus
+                      evidence, never a verdict. */}
+                  {selectedAspectRationale ? (
+                    <p className="rounded-lg bg-violet-500/5 p-2.5 text-xs italic leading-snug text-muted-foreground">
+                      <span className="font-semibold not-italic text-violet-700">
+                        Why this dimension:
+                      </span>{' '}
+                      {selectedAspectRationale}
+                      <span className="not-italic"> (AI, from corpus evidence)</span>
+                    </p>
                   ) : null}
 
                   {selectedProvenance && selectedProvenance.seedProjects.length > 0 ? (
@@ -1797,6 +1947,17 @@ export default function MindmapPage() {
                   }
                 : null
             }
+            rationales={rationaleData?.rationales}
+            probe={
+              annotation
+                ? {
+                    count: poorlyCovered.length,
+                    running: probing,
+                    error: probeError,
+                    onRun: handleProbeMissingAspect,
+                  }
+                : null
+            }
           />
         ) : view === 'crosstab' ? (
           <CrossTabView
@@ -1881,10 +2042,64 @@ export default function MindmapPage() {
         )}
       </div>
 
+      {/* First-run choice (Part 13 L-B): two honest entry points into the
+          inform→filter loop. Brief-first opens the taxonomy dialog (whose
+          overview field IS the brief); discover-first just closes — the
+          prebuilt space is a valid starting point, and Generate Taxonomy
+          stays one click away in the navigator. */}
+      <Dialog open={firstRunChoiceOpen} onOpenChange={setFirstRunChoiceOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>How do you want to start?</DialogTitle>
+            <DialogDescription>
+              Both paths lead to the same exploration — pick what fits how you think.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                trackUsage('first_run_brief');
+                setFirstRunChoiceOpen(false);
+                setTaxonomyDialogOpen(true);
+              }}
+              className="rounded-xl border p-3 text-left transition-colors hover:border-violet-300 hover:bg-violet-500/5"
+            >
+              <p className="flex items-center gap-1.5 text-sm font-semibold">
+                <Sparkles className="h-3.5 w-3.5 text-violet-600" />
+                Start from your brief
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Write down what you&apos;re imagining — the system builds a design space
+                scoped to it, with dimensions and options to explore.
+              </p>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                trackUsage('first_run_discover');
+                setFirstRunChoiceOpen(false);
+              }}
+              className="rounded-xl border p-3 text-left transition-colors hover:border-violet-300 hover:bg-violet-500/5"
+            >
+              <p className="flex items-center gap-1.5 text-sm font-semibold">
+                <Compass className="h-3.5 w-3.5 text-violet-600" />
+                Discover first
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Explore the prebuilt media-architecture space and its real projects;
+                generate your own taxonomy any time from the bottom bar.
+              </p>
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <GenerateTaxonomyDialog
         open={taxonomyDialogOpen}
         onOpenChange={setTaxonomyDialogOpen}
         onSuccess={handleTaxonomyGenerated}
+        initialOverview={projectBrief}
       />
 
       <GenerateNodesDialog

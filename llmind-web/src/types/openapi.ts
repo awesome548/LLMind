@@ -235,6 +235,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/corpus/rationale": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Rationale
+         * @description One-line per-aspect rationale ("why this dimension?"), grounded in the
+         *     annotation counts. Returns a ``job_id``; poll ``GET /api/jobs/{id}`` →
+         *     ``{rationales: {<aspect_id>: str}}``. Cached per aspect content+evidence.
+         */
+        post: operations["post_rationale_api_corpus_rationale_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/corpus/missing-aspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Missing Aspect
+         * @description Propose missing aspect(s) from poorly-covered projects. Returns a
+         *     ``job_id``; poll ``GET /api/jobs/{id}`` → ``{proposals: [{name, desc,
+         *     reason}]}``. Keyed so concurrent probes over the same inputs share a job.
+         */
+        post: operations["post_missing_aspect_api_corpus_missing_aspect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/corpus/similar": {
         parameters: {
             query?: never;
@@ -860,6 +904,18 @@ export interface components {
             corr: number[][];
         };
         /**
+         * MissingAspectRequest
+         * @description The coverage probe (Part 13 L-A): the frontend computes which corpus
+         *     projects the taxonomy describes poorly; this asks what dimension they
+         *     exemplify that the taxonomy misses.
+         */
+        MissingAspectRequest: {
+            /** Aspect Names */
+            aspect_names: string[];
+            /** Project Ids */
+            project_ids: string[];
+        };
+        /**
          * NodeCoordInput
          * @description A located taxonomy node — lets the backend derive the parent aspect and
          *     the "nearby existing ideas" from the same click that picks the seeds.
@@ -923,6 +979,41 @@ export interface components {
             x: number;
             /** Y */
             y: number;
+        };
+        /** RationaleAspect */
+        RationaleAspect: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Desc
+             * @default
+             */
+            desc: string;
+            /** Options */
+            options?: components["schemas"]["RationaleOption"][];
+        };
+        /** RationaleOption */
+        RationaleOption: {
+            /** Name */
+            name: string;
+            /** Count */
+            count: number;
+        };
+        /**
+         * RationaleRequest
+         * @description The taxonomy's aspects with their annotation counts (Part 13 L-A) —
+         *     the rationale cites the evidence, so the counts travel with the names.
+         */
+        RationaleRequest: {
+            /** Aspects */
+            aspects: components["schemas"]["RationaleAspect"][];
+            /**
+             * N Projects
+             * @default 0
+             */
+            n_projects: number;
         };
         /** ReflectionDraftRequest */
         ReflectionDraftRequest: {
@@ -1464,6 +1555,72 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["GenerateCellRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnotateJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_rationale_api_corpus_rationale_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RationaleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnotateJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_missing_aspect_api_corpus_missing_aspect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MissingAspectRequest"];
             };
         };
         responses: {

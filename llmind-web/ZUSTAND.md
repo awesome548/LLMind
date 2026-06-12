@@ -21,6 +21,11 @@ interface MindmapStoreState {
 
   // ── Generated taxonomy + working tree ──────────────────────────
   taxonomy: TaxonomyInput | null;       // Last result from POST /api/taxonomy/generate
+  projectBrief: string;                 // The overview the taxonomy was generated
+                                        // from (Part 13 L-B) — prefills the dialog
+                                        // when "Edit Brief & Taxonomy" reopens it.
+                                        // Scopes the SPACE; candidate briefs
+                                        // describe designs within it
   nodes: ReadonlyArray<MindmapNode>;    // The working tree (incl. generated nodes)
 
   // ── Design-space exploration state ─────────────────────────────
@@ -51,6 +56,7 @@ interface MindmapStoreState {
   setTaxonomy(taxonomy: TaxonomyInput): void;  // ALSO rebuilds nodes + wipes all
                                                // exploration state (new taxonomy
                                                // = new design-space overlay)
+  setProjectBrief(brief: string): void;        // persists the generation overview
   setNodes(nodes): void;
   mergeCoords(coords): void;
   removeCoords(ids): void;          // e.g. after a rename → re-locate
@@ -83,7 +89,7 @@ interface MindmapStoreState {
 
 Persisted via `partialize` (= `selectSessionSnapshot`, also the session-file
 payload): `contextText`, `contextDescription`, `selectedTopic`,
-`taxonomy`, **`nodes`**, **`coords`**, **`discovered`**, **`provenance`**,
+`taxonomy`, `projectBrief`, **`nodes`**, **`coords`**, **`discovered`**, **`provenance`**,
 **`descriptionById`**, **`candidates`** (incl. briefs + trails),
 **`activeCandidateId`**, **`optionState`**, **`axesConfig`**, **`rubric`**,
 **`usage`**, **`events`**, **`reflections`**. New slices restore

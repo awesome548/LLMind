@@ -26,8 +26,9 @@ export type TopicProjectsMap = Readonly<Record<string, ReadonlyArray<MindmapProj
 /** Where a generated node came from — kept so every idea can cite its precedents. */
 export interface NodeProvenance {
   /** What informed this node into the space (Part 12 C1: accepted proposals
-   * carry their emitter; 'manual' = designer-typed in the schema view). */
-  source: 'generate-at' | 'generate-nodes' | 'manual' | 'steer' | 'cell';
+   * carry their emitter; 'manual' = designer-typed in the schema view;
+   * 'coverage' = an accepted missing-dimension proposal — Part 13 L-A). */
+  source: 'generate-at' | 'generate-nodes' | 'manual' | 'steer' | 'cell' | 'coverage';
   /** Corpus projects that seeded the generation (id null for non-corpus rows). */
   seedProjects: Array<{ id: string | null; name: string }>;
   /** The design-space location the user clicked (generate-at only). */

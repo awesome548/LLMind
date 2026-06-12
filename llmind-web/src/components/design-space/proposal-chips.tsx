@@ -11,12 +11,15 @@ import { Check, Lightbulb, X } from 'lucide-react';
 
 export interface OptionProposal {
   id: string;
+  /** What accepting inserts: an option under an aspect (default) or a whole
+   * NEW aspect under the root (the coverage probe, Part 13 L-A). */
+  kind?: 'option' | 'aspect';
   /** Aspect to add under — null when the emitter couldn't tell (the chip
-   * then offers a picker). */
+   * then offers a picker). Ignored for kind 'aspect'. */
   aspectId: string | null;
   text: string;
   desc: string;
-  source: 'steer' | 'cell';
+  source: 'steer' | 'cell' | 'coverage';
   /** One-line human-readable origin ("steering toward LED wall panels"). */
   evidence: string;
 }
@@ -39,6 +42,7 @@ export function ProposalChips({
   return (
     <>
       {proposals.map((proposal) => {
+        const isAspect = proposal.kind === 'aspect';
         const aspectId = proposal.aspectId ?? picks[proposal.id] ?? aspects[0]?.id ?? '';
         const aspectName = aspects.find((a) => a.id === aspectId)?.name ?? '?';
         return (
@@ -49,7 +53,7 @@ export function ProposalChips({
             <div className="flex items-start justify-between gap-2">
               <p className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-muted-foreground">
                 <Lightbulb className="h-3 w-3 text-amber-600" />
-                Add as option?
+                {isAspect ? 'Add as a new dimension?' : 'Add as option?'}
               </p>
               <button
                 type="button"
@@ -66,7 +70,11 @@ export function ProposalChips({
             )}
             <p className="mt-1 text-[10px] text-muted-foreground">from {proposal.evidence}</p>
             <div className="mt-1.5 flex items-center gap-1.5">
-              {proposal.aspectId === null ? (
+              {isAspect ? (
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                  a new column in the schema (no options yet — add or generate them)
+                </span>
+              ) : proposal.aspectId === null ? (
                 <select
                   value={aspectId}
                   onChange={(e) =>
@@ -88,7 +96,7 @@ export function ProposalChips({
               )}
               <button
                 type="button"
-                disabled={!aspectId}
+                disabled={!isAspect && !aspectId}
                 onClick={() => onAccept(proposal, aspectId)}
                 title="Add to the taxonomy"
                 className="shrink-0 rounded border p-1 text-amber-700 transition-colors enabled:hover:bg-amber-500/10 disabled:opacity-40"

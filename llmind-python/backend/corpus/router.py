@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import hashlib
+
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from backend import jobs
 from backend.corpus.annotate import annotate_taxonomy, taxonomy_hash
 from backend.corpus.cell import generate_cell
+from backend.corpus.rationale import (
+    draft_rationales,
+    probe_missing_aspect,
+    rationale_set_hash,
+)
 from backend.corpus.service import (
     CorpusServiceError,
     get_project,
@@ -85,6 +92,68 @@ def post_generate_cell(payload: GenerateCellRequest) -> AnnotateJobResponse:
             option_b=payload.option_b.model_dump(),
             exemplar_ids=payload.exemplar_ids,
         )
+    )
+    return AnnotateJobResponse(job_id=job_id, status="pending")
+
+
+class RationaleOption(BaseModel):
+    name: str = Field(min_length=1)
+    count: int = Field(ge=0)
+
+
+class RationaleAspect(BaseModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    desc: str = ""
+    options: list[RationaleOption] = Field(default_factory=list, max_length=40)
+
+
+class RationaleRequest(BaseModel):
+    """The taxonomy's aspects with their annotation counts (Part 13 L-A) —
+    the rationale cites the evidence, so the counts travel with the names."""
+
+    aspects: list[RationaleAspect] = Field(min_length=1, max_length=24)
+    n_projects: int = Field(default=0, ge=0)
+
+
+@router.post(
+    "/rationale", response_model=AnnotateJobResponse, status_code=status.HTTP_202_ACCEPTED
+)
+def post_rationale(payload: RationaleRequest) -> AnnotateJobResponse:
+    """One-line per-aspect rationale ("why this dimension?"), grounded in the
+    annotation counts. Returns a ``job_id``; poll ``GET /api/jobs/{id}`` →
+    ``{rationales: {<aspect_id>: str}}``. Cached per aspect content+evidence."""
+    aspects = [a.model_dump() for a in payload.aspects]
+    job_id = jobs.submit_keyed(
+        f"rationale:{rationale_set_hash(aspects)}",
+        lambda: draft_rationales(aspects, payload.n_projects),
+    )
+    return AnnotateJobResponse(job_id=job_id, status="pending")
+
+
+class MissingAspectRequest(BaseModel):
+    """The coverage probe (Part 13 L-A): the frontend computes which corpus
+    projects the taxonomy describes poorly; this asks what dimension they
+    exemplify that the taxonomy misses."""
+
+    aspect_names: list[str] = Field(min_length=1, max_length=24)
+    project_ids: list[str] = Field(min_length=1, max_length=6)
+
+
+@router.post(
+    "/missing-aspect",
+    response_model=AnnotateJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def post_missing_aspect(payload: MissingAspectRequest) -> AnnotateJobResponse:
+    """Propose missing aspect(s) from poorly-covered projects. Returns a
+    ``job_id``; poll ``GET /api/jobs/{id}`` → ``{proposals: [{name, desc,
+    reason}]}``. Keyed so concurrent probes over the same inputs share a job."""
+    key_src = ",".join(sorted(payload.project_ids)) + "|" + ",".join(sorted(payload.aspect_names))
+    key = hashlib.sha256(key_src.encode("utf-8")).hexdigest()[:16]
+    job_id = jobs.submit_keyed(
+        f"missing-aspect:{key}",
+        lambda: probe_missing_aspect(payload.aspect_names, payload.project_ids),
     )
     return AnnotateJobResponse(job_id=job_id, status="pending")
 

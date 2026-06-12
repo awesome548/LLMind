@@ -384,9 +384,17 @@ Prereqs: annotation finished (Schema view shows counts); backend running.
 Prereqs: an active candidate with choices and a brief.
 
 1. **Strip rails:** in the Inspector dock (or Perspectives → Examine), click
-   anywhere on a strip's track → a dashed ghost star marks the requested
-   score with a confirm chip ("steer the brief to +0.45 toward …"). **Steer**
-   runs the move; Cancel disarms.
+   OR **drag** along a strip's track — the dashed ghost star follows the
+   pointer (pointer-captured: keep dragging even outside the row) and the
+   confirm controls ("steer the brief to +0.45 toward … · Steer · Cancel")
+   render INSIDE the same strip card, directly under the rail. **Steer**
+   runs the move; Cancel disarms; while steering, the spinner replaces the
+   controls in place.
+1b. **The clipped star:** a brief scoring outside the corpus range renders
+   its star SOLID at ~70% opacity, clamped to the rail edge, with the
+   tooltip "outside the corpus range" (plus the caption). It must NOT be
+   dashed — at 20px a dashed outline reads as pixelation (the 2026-06-13
+   bug), and the caption already carries the meaning.
 2. **The veto card:** the result shows the old brief struck through, the
    revision, the named qualities, and the measurement — requested vs
    achieved (with a "language only moved part of the way" note when they
@@ -484,3 +492,37 @@ desktop research prototype).
    related projects vivid amber + glow, the selected node carries an
    own-hue halo + saturation lift, axes selection is white-stroked +
    saturated. (`#0f172a`/`#475569` strokes are gone from surface and axes.)
+
+---
+
+## 15. Iteration L round 1 (Part 13 L-A rationale layer + L-B entry choice)
+
+Prereqs: backend + LLM running; annotation finished for the current taxonomy.
+
+1. **Aspect rationales:** in the Schema view (after annotation), each column
+   header gains an italic "why: …" line (hover for the full text, labelled
+   as AI-from-corpus-evidence). First run per taxonomy takes ~1–2 min per
+   aspect (cached after under `data/projection/rationales/`; the cache key
+   includes the counts, so re-annotation re-drafts). Select an aspect (e.g.
+   via the Context breadcrumb) → the panel shows the violet "Why this
+   dimension: … (AI, from corpus evidence)" callout.
+2. **Coverage probe:** the status strip shows "N projects fit poorly — probe
+   for a missing dimension" (needs annotation + the surface universe; count
+   = projects annotated with ≤1 option, capped 5). Click → one LLM call →
+   1–2 amber chips "Add as a new dimension?" naming what those projects
+   exemplify, with the motivating projects as evidence. Accept → a new
+   schema column appears (no options yet; provenance `coverage`; the
+   timeline logs it). Dismiss → reconsiderable from the timeline. Probe
+   failure shows in the strip ("… — click to retry"), never silently.
+   Verified live 2026-06-13: proposed "Spatial-Perceptual Integration"; it
+   joined the schema as the 7th aspect.
+3. **First-run choice:** with a FRESH store (no taxonomy, never offered),
+   loading the app opens "How do you want to start?" — Start from your
+   brief (→ Generate Taxonomy dialog) vs Discover first (→ closes).
+   Returning sessions never see it. (Test trick: back up + remove the
+   `mindmap-store` localStorage key, reload, then restore.)
+4. **Edit the brief afterwards:** once a taxonomy exists, the navigator's
+   "Generate Taxonomy" button reads **"Edit Brief & Taxonomy"** and reopens
+   the dialog prefilled with the persisted brief (typing replaces it;
+   closing without generating keeps the old brief). Generating saves the
+   new overview as the project brief and (as always) rebuilds the space.

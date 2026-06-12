@@ -25,7 +25,12 @@ type Step = 'form' | 'confirm';
 interface GenerateTaxonomyDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSuccess?: (result: GenerateTaxonomyResponse) => void;
+  /** Receives the generated taxonomy AND the overview it came from, so the
+   * caller can persist the project brief (Part 13 L-B: editable later via
+   * "Edit Brief & Taxonomy"). */
+  onSuccess?: (result: GenerateTaxonomyResponse, overview: string) => void;
+  /** Prefill for the overview field — the persisted project brief. */
+  initialOverview?: string;
 }
 
 const fieldClass =
@@ -35,9 +40,14 @@ export function GenerateTaxonomyDialog({
   open,
   onOpenChange,
   onSuccess,
+  initialOverview,
 }: GenerateTaxonomyDialogProps) {
   const [step, setStep] = useState<Step>('form');
-  const [projectOverview, setProjectOverview] = useState('');
+  // Derived-value pattern (no set-state-in-effect): the field shows the
+  // persisted brief until the designer types; typing takes over, and closing
+  // resets so the next open prefills fresh.
+  const [typedOverview, setTypedOverview] = useState<string | null>(null);
+  const projectOverview = typedOverview ?? initialOverview ?? '';
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('medium');
   const [mode, setMode] = useState<BackendMode>('vllm');
 
@@ -53,7 +63,7 @@ export function GenerateTaxonomyDialog({
       { project_overview: projectOverview, reasoning_effort: reasoningEffort, mode },
       {
         onSuccess: (result) => {
-          onSuccess?.(result);
+          onSuccess?.(result, projectOverview);
           toast.success(`Taxonomy generated — ${result.aspects.length} aspect${result.aspects.length !== 1 ? 's' : ''} created.`);
           onOpenChange(false);
         },
@@ -67,6 +77,7 @@ export function GenerateTaxonomyDialog({
       if (!next) {
         reset();
         setStep('form');
+        setTypedOverview(null);
       }
     }
   };
@@ -94,7 +105,7 @@ export function GenerateTaxonomyDialog({
                   placeholder="Describe your project, goals, and context..."
                   value={projectOverview}
                   onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-                    setProjectOverview(e.target.value)
+                    setTypedOverview(e.target.value)
                   }
                   required
                   disabled={isPending}

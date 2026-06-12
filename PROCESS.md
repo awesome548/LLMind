@@ -158,16 +158,35 @@ clean); B1 verified live in the preview. Remaining:
    cell-grammar tooltip, "unexplored combination", percentile phrasing);
    chips offset accounts for the OPEN timeline; two-click candidate delete
    (3s auto-disarm); lens pill always names its anchor. All verified live.
-10. **Next-iteration decision pending (Iteration L).** The final
-    dissertation was read against the prototype (2026-06-13); the critical
-    inspection + a decision menu live in ITERATION-PLAN **Part 13**:
-    L-A rationale layer ("why these seven?" per-aspect why + coverage
-    probe), L-B brief-first entry (project brief as first-class object),
-    L-C blind-first ideation + overlap mirror (anti-fixation instrument),
-    L-D SnapShot compare + K9 rollback, L-E run the expert study (CSI +
-    study bundle), L-F constrainedness mirror, L-G corpus scale (parked).
-    Recommended order: A+B → (C) → E, with D/F as ride-alongs. AWAITING
-    USER CHOICE.
+10. **Iteration L round 1 DONE (2026-06-13): L-A + modified L-B** (user
+    chose from the Part 13 menu; status in ITERATION-PLAN **13.3**).
+    L-A: `/api/corpus/rationale` (per-aspect why under schema headers +
+    Context panel; cached per aspect+counts in `data/projection/rationales/`)
+    and the coverage probe (`poorlyCoveredProjects` + `/api/corpus/
+    missing-aspect` → aspect-kind proposal chips → new schema column with
+    provenance `coverage`). Live-verified: probe proposed
+    "Spatial-Perceptual Integration", accepted into the schema. L-B became
+    a once-only first-run choice dialog (brief-first → taxonomy dialog vs
+    discover-first), verified via localStorage swap. Gates: backend
+    134/134, frontend 66 tests, tsc/eslint clean; openapi regenerated;
+    backend restarted (task b80yka2f0).
+11. **Study paperwork drafted:** USER-FLOWS.md (F0–F9, per-flow
+    instrumentation) + USER-TESTING-PLAN.md (VP-centred: 4 VP components ×
+    5 tasks, trust-delta probe for the rationale layer, CSI, synthesis →
+    investment mapping). Next: pilot session, then L-C/L-D/L-E/L-F per the
+    menu.
+12. **Steering-rail polish + brief editing (2026-06-13):** the "pixelated"
+    strip star was the clipped-score dashed outline breaking into dots at
+    20px → clipped stars now render solid at 0.7 opacity, clamped to the
+    rail edge, with a tooltip (TESTING §12.1b). Rails are draggable
+    (pointer-captured; `draggingRef` not state — same-frame moves) and
+    Steer/Cancel render INSIDE the strip card. L-B follow-up: `projectBrief`
+    persisted in the store/sessions; after first generation the navigator
+    button becomes "Edit Brief & Taxonomy", reopening the dialog prefilled
+    (derived-value pattern). All live-verified except the relabel itself
+    (this session's `taxonomy` is null — the tree grew from the default
+    schema — so the label correctly stays "Generate Taxonomy" until a real
+    brief+generation round).
 
 ## 5. Environment notes
 

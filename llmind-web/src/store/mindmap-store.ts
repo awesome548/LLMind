@@ -94,6 +94,11 @@ interface MindmapStoreState {
   contextDescription: string;
   selectedTopic: string;
   taxonomy: TaxonomyInput | null;
+  /** The PROJECT brief — the overview the taxonomy was generated from (Part
+   * 13 L-B's inform step). Persisted so it can be edited and regenerated
+   * from ("Edit Brief & Taxonomy" in the navigator). Distinct from candidate
+   * briefs: this scopes the SPACE, those describe designs within it. */
+  projectBrief: string;
   /** The working tree — shared by the mind map and the design space, persisted
    * so generated nodes survive a reload (they are NOT derivable from taxonomy). */
   nodes: ReadonlyArray<MindmapNode>;
@@ -128,6 +133,8 @@ interface MindmapStoreState {
    * all exploration state (coords/discovered/provenance) — a new taxonomy is a
    * new design space overlay. */
   setTaxonomy: (taxonomy: TaxonomyInput) => void;
+  /** Persists the project overview a taxonomy was generated from. */
+  setProjectBrief: (brief: string) => void;
   setNodes: (nodes: ReadonlyArray<MindmapNode>) => void;
   mergeCoords: (coords: CoordMap) => void;
   /** Drop coordinates (e.g. after a rename — the old embedding no longer applies). */
@@ -178,6 +185,7 @@ const createInitialState = () => ({
   contextDescription: '',
   selectedTopic: '',
   taxonomy: null as TaxonomyInput | null,
+  projectBrief: '',
   nodes: cloneNodes(SCHEMA_MINDMAP_NODES) as ReadonlyArray<MindmapNode>,
   coords: {} as CoordMap,
   discovered: {} as Record<string, GenerationTrail>,
@@ -202,6 +210,7 @@ export type SessionSnapshot = Pick<
   | 'contextDescription'
   | 'selectedTopic'
   | 'taxonomy'
+  | 'projectBrief'
   | 'nodes'
   | 'coords'
   | 'discovered'
@@ -223,6 +232,7 @@ export const selectSessionSnapshot = (state: SessionSnapshot): SessionSnapshot =
   contextDescription: state.contextDescription,
   selectedTopic: state.selectedTopic,
   taxonomy: state.taxonomy,
+  projectBrief: state.projectBrief,
   nodes: state.nodes,
   coords: state.coords,
   discovered: state.discovered,
@@ -281,6 +291,7 @@ export const useMindmapStore = create<MindmapStoreState>()(
               reflections: logged.reflections,
             };
           }),
+        setProjectBrief: (brief) => set(() => ({ projectBrief: brief })),
         setNodes: (nodes) => set(() => ({ nodes })),
         mergeCoords: (coords) =>
           set((state) => ({ coords: { ...state.coords, ...coords } })),
