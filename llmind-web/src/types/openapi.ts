@@ -190,6 +190,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/corpus/annotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Annotate
+         * @description Annotate the corpus against the taxonomy's options (Halskov-style
+         *     schema population, automated — Part 12 A2). Returns a ``job_id``; poll
+         *     ``GET /api/jobs/{job_id}``. Cached per option content, so unchanged
+         *     options resolve instantly on re-runs.
+         */
+        post: operations["post_annotate_api_corpus_annotate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/corpus/generate-cell": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Generate Cell
+         * @description Generate ONE concept into an empty option×option cell (the
+         *     morphological-combination → candidate-skeleton flow). Returns a
+         *     ``job_id``; poll ``GET /api/jobs/{job_id}``.
+         */
+        post: operations["post_generate_cell_api_corpus_generate_cell_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/corpus/similar": {
         parameters: {
             query?: never;
@@ -277,6 +322,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/candidates/steer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Steer
+         * @description Steer the brief along a metric / toward a precedent / away from one
+         *     (LLM — async job). Returns ``{job_id}``; poll ``GET /api/jobs/{job_id}``.
+         *     The result is ``{revised_text, named_qualities, measurement}`` — shown as
+         *     a diff for veto, never auto-committed.
+         */
+        post: operations["steer_api_candidates_steer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/candidates/alignment": {
         parameters: {
             query?: never;
@@ -292,6 +360,27 @@ export interface paths {
          *     agree — overall and per aspect — in the original embedding metric.
          */
         post: operations["alignment_api_candidates_alignment_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reflections/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Draft
+         * @description Draft a one-line rationale for an exploration event (async job).
+         *     Returns ``{job_id}``; poll ``GET /api/jobs/{id}`` → ``{draft}``.
+         */
+        post: operations["post_draft_api_reflections_draft_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -390,6 +479,34 @@ export interface components {
             /** Score */
             score: number;
         };
+        /** AnnotateJobResponse */
+        AnnotateJobResponse: {
+            /** Job Id */
+            job_id: string;
+            /** Status */
+            status: string;
+        };
+        /** AnnotateOption */
+        AnnotateOption: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Desc
+             * @default
+             */
+            desc: string;
+        };
+        /**
+         * AnnotateRequest
+         * @description The designer's option set (aspect grouping is irrelevant to membership
+         *     judgments, so the request is flat). Part 12 A2.
+         */
+        AnnotateRequest: {
+            /** Options */
+            options: components["schemas"]["AnnotateOption"][];
+        };
         /** AspectResponse */
         AspectResponse: {
             /** Name */
@@ -466,6 +583,16 @@ export interface components {
          * @enum {string}
          */
         BackendMode: "openai" | "vllm";
+        /** CellOption */
+        CellOption: {
+            /** Name */
+            name: string;
+            /**
+             * Desc
+             * @default
+             */
+            desc: string;
+        };
         /**
          * ContentMode
          * @description Selects which text field(s) are used to generate embeddings.
@@ -577,6 +704,21 @@ export interface components {
             reasoning_effort: string;
             /** Brief */
             brief?: string | null;
+        };
+        /**
+         * GenerateCellRequest
+         * @description An empty cross-tab cell (Part 12 B2): two option poles + the
+         *     half-matching precedents the frontend already holds from annotation.
+         */
+        GenerateCellRequest: {
+            /** Aspect A */
+            aspect_a: string;
+            option_a: components["schemas"]["CellOption"];
+            /** Aspect B */
+            aspect_b: string;
+            option_b: components["schemas"]["CellOption"];
+            /** Exemplar Ids */
+            exemplar_ids?: string[];
         };
         /** GenerateNodesRequest */
         GenerateNodesRequest: {
@@ -782,6 +924,11 @@ export interface components {
             /** Y */
             y: number;
         };
+        /** ReflectionDraftRequest */
+        ReflectionDraftRequest: {
+            /** Context */
+            context: string;
+        };
         /** RelatedProject */
         RelatedProject: {
             /** Id */
@@ -853,6 +1000,43 @@ export interface components {
         SimilarProjectsResponse: {
             /** Projects */
             projects?: components["schemas"]["SimilarProject"][];
+        };
+        /** SteerMetric */
+        SteerMetric: {
+            /** Pole A Text */
+            pole_a_text: string;
+            /** Pole B Text */
+            pole_b_text: string;
+            /** Target Score */
+            target_score: number;
+        };
+        /** SteerReference */
+        SteerReference: {
+            /** Text */
+            text: string;
+            /**
+             * Weight
+             * @default 0.5
+             */
+            weight: number;
+        };
+        /**
+         * SteerRequest
+         * @description One deliberate move on a brief (Part 12 B3). The move is made in
+         *     language; the response carries the requested-vs-achieved measurement.
+         */
+        SteerRequest: {
+            /** Text */
+            text: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "metric" | "toward" | "away";
+            metric?: components["schemas"]["SteerMetric"] | null;
+            reference?: components["schemas"]["SteerReference"] | null;
+            /** Preserve */
+            preserve?: string[];
         };
         /** SurfaceBounds */
         SurfaceBounds: {
@@ -1237,6 +1421,72 @@ export interface operations {
             };
         };
     };
+    post_annotate_api_corpus_annotate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnnotateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnotateJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_generate_cell_api_corpus_generate_cell_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GenerateCellRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnotateJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_similar_projects_api_corpus_similar_post: {
         parameters: {
             query?: never;
@@ -1369,6 +1619,41 @@ export interface operations {
             };
         };
     };
+    steer_api_candidates_steer_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SteerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     alignment_api_candidates_alignment_post: {
         parameters: {
             query?: never;
@@ -1389,6 +1674,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AlignmentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_draft_api_reflections_draft_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReflectionDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

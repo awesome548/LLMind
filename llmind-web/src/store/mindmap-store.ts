@@ -8,9 +8,12 @@ import {
 import type {
   AxesConfig,
   DesignCandidate,
+  ExplorationEvent,
+  ExplorationEventKind,
   MindmapNode,
   NodeProvenance,
   OptionStateEntry,
+  Reflection,
   RubricMetric,
 } from '../features/mindmap/types';
 import type { CoordMap, GenerationTrail } from '../features/design-space/types';
@@ -31,6 +34,54 @@ function cloneNodes(nodes: ReadonlyArray<MindmapNode>): MindmapNode[] {
     children: node.children ? cloneNodes(node.children) : undefined,
   }));
 }
+
+/** Topic of a node id (event labels are composed at record time). */
+function topicOf(nodes: ReadonlyArray<MindmapNode>, id: string): string {
+  for (const node of nodes) {
+    if (node.id === id) return node.topic;
+    const inChild = node.children ? topicOf(node.children, id) : '';
+    if (inChild) return inChild;
+  }
+  return '';
+}
+
+/** The exploration log is append-only but bounded (C3). */
+const EVENT_CAP = 500;
+
+/** Drop reflections whose event no longer exists (capped out / partial
+ * restore) — they would otherwise leak in storage, invisible everywhere. */
+const gcReflections = (
+  events: ReadonlyArray<ExplorationEvent>,
+  reflections: Record<string, Reflection>
+): Record<string, Reflection> => {
+  const alive = new Set(events.map((e) => e.id));
+  const entries = Object.entries(reflections).filter(([eventId]) => alive.has(eventId));
+  return entries.length === Object.keys(reflections).length
+    ? reflections
+    : Object.fromEntries(entries);
+};
+
+const appendEvent = (
+  state: { events: ExplorationEvent[]; reflections: Record<string, Reflection> },
+  kind: ExplorationEventKind,
+  label: string,
+  refs: string[],
+  detail?: string
+): { events: ExplorationEvent[]; reflections: Record<string, Reflection>; id: string } => {
+  const id = `ev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const events = [
+    ...state.events,
+    { id, ts: Date.now(), kind, label, refs, ...(detail ? { detail } : {}) },
+  ].slice(-EVENT_CAP);
+  return {
+    events,
+    reflections:
+      state.events.length >= EVENT_CAP // something fell off the front
+        ? gcReflections(events, state.reflections)
+        : state.reflections,
+    id,
+  };
+};
 
 export interface MindmapSelectionInput {
   topic: string;
@@ -67,6 +118,11 @@ interface MindmapStoreState {
   rubric: RubricMetric[];
   /** Feature-usage counters (research instrumentation; included in session export). */
   usage: Record<string, number>;
+  /** The exploration log (Part 12 C3): what happened to the schema, in order.
+   * Append-only, capped — the replay slider and the study's timeline. */
+  events: ExplorationEvent[];
+  /** event.id → the designer's one-line rationale (Part 12 C2). */
+  reflections: Record<string, Reflection>;
   selectTopic: (input: MindmapSelectionInput) => void;
   /** Replaces the taxonomy AND rebuilds the working tree from it, invalidating
    * all exploration state (coords/discovered/provenance) — a new taxonomy is a
@@ -101,6 +157,17 @@ interface MindmapStoreState {
    * coordinates (`cand:` keys) are exempt — candidates are pruned by choices. */
   pruneMissingNodes: (validIds: ReadonlySet<string>) => void;
   trackUsage: (event: string) => void;
+  /** Append an exploration event (C3); returns its id so reflections and
+   * UI prompts can attach. Store actions record their own events — this is
+   * for commit points that live in components (steer apply, cell keep…). */
+  recordEvent: (
+    kind: ExplorationEventKind,
+    label: string,
+    refs?: string[],
+    detail?: string
+  ) => string;
+  /** Attach/replace the designer's one-line rationale for an event (C2). */
+  addReflection: (eventId: string, text: string, edited: boolean) => void;
   /** Replace the whole exploration with an imported session snapshot. */
   restoreSession: (snapshot: SessionSnapshot) => void;
   resetMindmapStore: () => void;
@@ -122,6 +189,8 @@ const createInitialState = () => ({
   axesConfig: null as AxesConfig | null,
   rubric: [] as RubricMetric[],
   usage: {} as Record<string, number>,
+  events: [] as ExplorationEvent[],
+  reflections: {} as Record<string, Reflection>,
 });
 
 type PersistedState = ReturnType<typeof createInitialState>;
@@ -144,6 +213,8 @@ export type SessionSnapshot = Pick<
   | 'axesConfig'
   | 'rubric'
   | 'usage'
+  | 'events'
+  | 'reflections'
 >;
 
 /** Single definition of what persists / what a session file contains. */
@@ -163,6 +234,8 @@ export const selectSessionSnapshot = (state: SessionSnapshot): SessionSnapshot =
   axesConfig: state.axesConfig,
   rubric: state.rubric,
   usage: state.usage,
+  events: state.events,
+  reflections: state.reflections,
 });
 
 const bumpUsage = (usage: Record<string, number>, event: string) => ({
@@ -182,19 +255,32 @@ export const useMindmapStore = create<MindmapStoreState>()(
             selectedTopic: topic,
           })),
         setTaxonomy: (taxonomy) =>
-          set(() => ({
-            taxonomy,
-            nodes: taxonomyToMindmapNodes(taxonomy).nodes,
-            coords: {},
-            discovered: {},
-            provenance: {},
-            descriptionById: {},
-            candidates: {},
-            activeCandidateId: null,
-            optionState: {},
-            axesConfig: null,
-            rubric: [],
-          })),
+          set((state) => {
+            const nodes = taxonomyToMindmapNodes(taxonomy).nodes;
+            // The log SURVIVES a new taxonomy (history, not state) — the
+            // marker lets the replay read across the boundary honestly.
+            const logged = appendEvent(
+              state,
+              'taxonomy_set',
+              `Generated a new taxonomy (${nodes[0]?.children?.length ?? 0} aspects)`,
+              []
+            );
+            return {
+              taxonomy,
+              nodes,
+              coords: {},
+              discovered: {},
+              provenance: {},
+              descriptionById: {},
+              candidates: {},
+              activeCandidateId: null,
+              optionState: {},
+              axesConfig: null,
+              rubric: [],
+              events: logged.events,
+              reflections: logged.reflections,
+            };
+          }),
         setNodes: (nodes) => set(() => ({ nodes })),
         mergeCoords: (coords) =>
           set((state) => ({ coords: { ...state.coords, ...coords } })),
@@ -219,31 +305,46 @@ export const useMindmapStore = create<MindmapStoreState>()(
         createCandidate: (name) => {
           const id = `cand-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
           const count = Object.keys(get().candidates).length;
-          set((state) => ({
-            candidates: {
-              ...state.candidates,
-              [id]: {
-                id,
-                name: name?.trim() || `Candidate ${count + 1}`,
-                choices: {},
-                createdAt: Date.now(),
+          const candidateName = name?.trim() || `Candidate ${count + 1}`;
+          set((state) => {
+            const logged = appendEvent(
+              state,
+              'candidate_created',
+              `Created candidate "${candidateName}"`,
+              [id]
+            );
+            return {
+              candidates: {
+                ...state.candidates,
+                [id]: {
+                  id,
+                  name: candidateName,
+                  choices: {},
+                  createdAt: Date.now(),
+                },
               },
-            },
-            activeCandidateId: id,
-            usage: bumpUsage(state.usage, 'candidate_created'),
-          }));
+              activeCandidateId: id,
+              usage: bumpUsage(state.usage, 'candidate_created'),
+              events: logged.events,
+              reflections: logged.reflections,
+            };
+          });
           return id;
         },
         deleteCandidate: (id) =>
           set((state) => {
             const next = { ...state.candidates };
+            const name = state.candidates[id]?.name ?? id;
             delete next[id];
+            const logged = appendEvent(state, 'candidate_deleted', `Deleted candidate "${name}"`, [id]);
             return {
               candidates: next,
               activeCandidateId:
                 state.activeCandidateId === id
                   ? (Object.keys(next)[0] ?? null)
                   : state.activeCandidateId,
+              events: logged.events,
+              reflections: logged.reflections,
             };
           }),
         setActiveCandidate: (id) => set(() => ({ activeCandidateId: id })),
@@ -288,8 +389,24 @@ export const useMindmapStore = create<MindmapStoreState>()(
             const choices = { ...candidate.choices };
             if (optionId === null) delete choices[aspectId];
             else choices[aspectId] = optionId;
+            const logged =
+              optionId !== null
+                ? appendEvent(
+                    state,
+                    'choose',
+                    `Chose "${topicOf(state.nodes, optionId)}" for ${topicOf(state.nodes, aspectId)} (${candidate.name})`,
+                    [optionId, aspectId, id]
+                  )
+                : appendEvent(
+                    state,
+                    'unchoose',
+                    `Cleared ${topicOf(state.nodes, aspectId)} (${candidate.name})`,
+                    [aspectId, id]
+                  );
             return {
               candidates: { ...state.candidates, [id]: { ...candidate, choices } },
+              events: logged.events,
+              reflections: logged.reflections,
               ...(optionId !== null ? { usage: bumpUsage(state.usage, 'choice_set') } : {}),
             };
           }),
@@ -309,6 +426,12 @@ export const useMindmapStore = create<MindmapStoreState>()(
                 },
               ])
             );
+            const logged = appendEvent(
+              state,
+              'reject',
+              `Rejected "${topicOf(state.nodes, nodeId)}"${reason ? ` — ${reason}` : ''}`,
+              [nodeId]
+            );
             return {
               candidates,
               optionState: {
@@ -316,15 +439,30 @@ export const useMindmapStore = create<MindmapStoreState>()(
                 [nodeId]: { state: 'rejected', ...(reason ? { reason } : {}) },
               },
               usage: bumpUsage(state.usage, 'option_rejected'),
+              events: logged.events,
+              reflections: logged.reflections,
             };
           }),
         reopenOption: (nodeId) =>
           set((state) => {
             const next = { ...state.optionState };
             delete next[nodeId];
-            return { optionState: next };
+            const logged = appendEvent(
+              state,
+              'reopen',
+              `Reopened "${topicOf(state.nodes, nodeId)}"`,
+              [nodeId]
+            );
+            return {
+              optionState: next,
+              events: logged.events,
+              reflections: logged.reflections,
+            };
           }),
         setAxesConfig: (config) => set(() => ({ axesConfig: config })),
+        // Events and reflections are deliberately NOT pruned here: they are
+        // HISTORY, not state — labels were composed at record time precisely
+        // so the log stays readable after its objects are gone (PRT).
         pruneMissingNodes: (validIds) =>
           set((state) => {
             const keepEntries = <V,>(record: Record<string, V>) =>
@@ -365,10 +503,31 @@ export const useMindmapStore = create<MindmapStoreState>()(
           set((state) => ({
             usage: { ...state.usage, [event]: (state.usage[event] ?? 0) + 1 },
           })),
+        recordEvent: (kind, label, refs = [], detail) => {
+          let id = '';
+          set((state) => {
+            const logged = appendEvent(state, kind, label, refs, detail);
+            id = logged.id;
+            return { events: logged.events, reflections: logged.reflections };
+          });
+          return id;
+        },
+        addReflection: (eventId, text, edited) =>
+          set((state) => ({
+            reflections: {
+              ...state.reflections,
+              [eventId]: { text: text.trim(), edited, ts: Date.now() },
+            },
+          })),
         // Defaults first, so sessions saved before a slice existed (e.g. rubric)
         // reset it instead of leaking the current exploration's state.
         restoreSession: (snapshot) =>
-          set(() => ({ ...selectSessionSnapshot(createInitialState()), ...snapshot })),
+          set(() => {
+            const next = { ...selectSessionSnapshot(createInitialState()), ...snapshot };
+            // A partial/hand-edited file can carry reflections for events it
+            // doesn't contain — drop them rather than leak them invisibly.
+            return { ...next, reflections: gcReflections(next.events, next.reflections) };
+          }),
         resetMindmapStore: () => set(() => createInitialState()),
       }),
       {
@@ -376,7 +535,10 @@ export const useMindmapStore = create<MindmapStoreState>()(
         // v1 dropped pre-v1 state (stale placeholder taxonomy). v2 adds the
         // persisted exploration state (nodes/coords/discovered/provenance) so a
         // reload no longer loses generated work; v1 state is upgraded by
-        // rebuilding the tree from its taxonomy.
+        // rebuilding the tree from its taxonomy. Slices added AFTER v2
+        // (rubric, usage, events, reflections) need no version bump: the
+        // persist merge keeps their initial-state defaults when the stored
+        // payload lacks them — pre-slice state has nothing to migrate.
         version: 2,
         migrate: (persisted, version) => {
           if (version < 1 || !persisted) return createInitialState();

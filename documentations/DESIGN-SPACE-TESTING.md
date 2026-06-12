@@ -289,3 +289,198 @@ Validated 2026-06-12: LED at (0.501, 0.158) amid its five anchors, support 66%,
 clipped false; plaza (0.544, 0.579) support 12%; olfactory support 1% inside
 the map; band/legend/tooltip phrase gone (viewBox `0 0 1000 1000`); backend
 87/87, frontend 39/39 + tsc + eslint clean.
+
+---
+
+## 9. Manual checks — the schema spine (Iteration K, Phase A)
+
+Prereqs: backend + embedding/LLM server running; a taxonomy loaded.
+
+1. **Schema view:** the nav bar's **Structure** tab hosts the views of the
+   same constraint structure — a top-center toggle switches **Tree** (the
+   editable mind map) ↔ **Schema** ↔ **Cross-tab**. The schema is a pan-zoom
+   canvas (wheel zooms toward the cursor, left-drag pans, Reset view
+   restores — the same grammar as every other canvas); aspect cards pack
+   into balanced columns so the sheet fills the screen instead of one long
+   clipped row. Chosen options
+   (active candidate) carry a violet ring; rejected options are struck +
+   dimmed (tooltip shows the reason); generated/manual options are italic
+   (Halskov's "informed" mark).
+2. **Annotation:** on first entry the header reads "annotating corpus…" (one
+   local-LLM call per option — minutes on first run, instant after; cached
+   per option content under `data/projection/annotations/`). When done, each
+   option shows a count badge.
+3. **Receipts:** click a count badge → a popover lists the exemplifying
+   projects BY NAME; clicking one opens it in the Related Projects panel
+   (pinned until the next node selection). Spot-check: "LED wall panels"
+   must list LED-facade projects; zero counts should only appear for
+   genuinely thin options.
+4. **Diagnostics:** amber badge = too broad (≥80% of corpus); sky badge =
+   unprecedented (≤1 project — possibly novel, possibly vague).
+5. **Facets (±):** hover an option → +/− chips. "+" fades all map corpus
+   glyphs WITHOUT that option (switch to Design Space to see); "−" fades all
+   WITH it. Combinable across aspects; glyphs fade (opacity), never vanish.
+6. **In-table actions:** hover actions choose (✓, needs an active candidate),
+   reject (✕), reopen (↺); "+ add option" appends a designer-authored option
+   (manual informing) — it appears in the mind map and locates on the map
+   automatically.
+7. **Selection sync:** clicking an option cell selects it everywhere
+   (Context panel breadcrumb updates; Related Projects searches it).
+
+---
+
+## 10. Inspector dock (Part 12 B1 — examine without leaving the map)
+
+Prereqs: backend + embedding server running; a candidate with at least one
+choice and a brief.
+
+1. **Appearance:** in **Design Space**, with a candidate active, an
+   **Inspector** panel appears under Related Projects in the right column,
+   badge = candidate name. No candidate → no dock.
+2. **Content parity:** the dock shows the same strips as Perspectives →
+   Examine — the concept↔commitments headline, one consistency strip per
+   choice, rubric strips — scrolling inside the dock (38vh cap).
+3. **No ping-pong:** the candidate's star, its precedents, and the strips
+   are all visible in one view; editing the brief (Candidate panel) updates
+   headline + strips in place.
+4. **Column budget:** with the dock open, Related Projects switches to
+   tighter column caps (`compact`) so the dock stays on-screen; collapsing
+   the dock (chevron) restores the full caps.
+5. **Teach states:** active candidate without a brief → the dock asks for a
+   brief instead of rendering empty strips; rubric metrics are still managed
+   in Perspectives (the dock measures, the editor stays in the document
+   view).
+
+---
+
+## 11. Cross-tab lens (Part 12 B2 — the morphological view)
+
+Prereqs: annotation finished (Schema view shows counts); backend running.
+
+1. **Entry:** Structure mode → top-center toggle → **Cross-tab**. The grid
+   is a pan-zoom canvas (same grammar as every other view; Reset view at
+   bottom-left); the control pill at the top picks the row and column
+   aspects (defaults: the first two).
+2. **Cells:** each cell shows how many corpus projects exemplify BOTH
+   options; click → popover lists them by name (click-through opens the
+   project). Candidates whose choices include both options appear as a star
+   count in the cell and by name in the popover.
+3. **The gap flow:** a dashed "—" cell is an exact, nameable gap. Its popover
+   says no precedent combines the two and offers **Generate into this gap**
+   (one local-LLM call, seeded with half-matching precedents — minutes on
+   the thinking model). The result previews as name + desc with
+   **Keep as candidate** / Dismiss — keeping creates a candidate committed
+   to the two options with the concept as its brief (check the Candidate
+   panel and the map star).
+4. **Drill-down:** "show as continuous scatter" opens Perspectives directly
+   on the Cross-two-metrics tab.
+5. **Consistency check:** a cell's count can never exceed either option's
+   schema-view count; the LED column should agree with the schema table.
+
+---
+
+## 12. Steering (Part 12 B3 — one deliberate move, always vetoable)
+
+Prereqs: an active candidate with choices and a brief.
+
+1. **Strip rails:** in the Inspector dock (or Perspectives → Examine), click
+   anywhere on a strip's track → a dashed ghost star marks the requested
+   score with a confirm chip ("steer the brief to +0.45 toward …"). **Steer**
+   runs the move; Cancel disarms.
+2. **The veto card:** the result shows the old brief struck through, the
+   revision, the named qualities, and the measurement — requested vs
+   achieved (with a "language only moved part of the way" note when they
+   diverge >0.15) and along vs orthogonal displacement. **Apply to brief**
+   commits (the star moves; its trail records the hop); Discard drops it.
+3. **Precedent pulls:** in the Candidate panel's precedents list, hover a
+   row → **⇢ pull** / **⇠ push**. Same veto card below the list.
+4. **Preserve:** steer with several choices committed; the revision must not
+   drop the chosen options' substance (they are sent as `preserve`).
+5. **The log:** every steer appends to `data/projection/steer_log.jsonl`
+   (mode, requested, achieved, along, orthogonal, named_qualities, brief
+   lengths) — the study's steering dataset.
+
+---
+
+## 13. The loops (Part 12 C1–C3)
+
+Prereqs: backend + LLM running; an active candidate with choices and a brief.
+
+1. **Events (C3):** every commitment writes the exploration log — choose,
+   reject (+reason), reopen, candidate create/delete, steer apply, cell
+   keep, generation, option add, new taxonomy. Labels are composed at
+   record time, so they stay readable after deletions. Capped at 500;
+   persisted; in session files.
+2. **Reflection chip (C2):** after a reflectable act (choose, reject, steer
+   apply, candidate create, cell keep, generate) a small "Why? (optional)"
+   chip appears bottom-right with the event named. The local LLM drafts a
+   one-line first-person rationale asynchronously — it fills the input ONLY
+   if you haven't typed. Enter/✓ accepts (edits are tracked), Esc/✕ skips.
+   Never modal; the exploration continues regardless. Accepted reflections
+   appear in the markdown export under "Reflections" (AI-draft-accepted
+   marked) and round-trip in session files.
+3. **Proposal chips (C1):** applying a steer turns its named qualities into
+   amber "Add as option?" chips (aspect known for strip steers; precedent
+   pulls offer an aspect picker); keeping a cell idea proposes it under both
+   parent aspects. Accept inserts the option — italic (informed) in the
+   schema, provenance `steer`/`cell`, an `option_added` event — and it
+   locates on the map. Dismiss drops the chip; nothing transient persists.
+4. **Timeline (C3):** Schema view → "Timeline (N steps)" pill (bottom-
+   center) → a Fusion-style marker strip: one icon per step (color-coded by
+   kind; a small notebook badge marks steps with a kept reflection), the
+   playhead ringed with a few-words bubble, future steps dimmed. Click a
+   marker → the table shows the space AS IT STOOD after that step (rings =
+   latest commitment per aspect across all candidates, struck = rejected by
+   then, italic = informed by then, GHOSTED = didn't exist yet; the clicked
+   step's subject cells get an amber outline so every scrub visibly answers;
+   read-only) AND the detail card shows the
+   full label, time, and the kept justification. Dismissed suggestions are
+   steps too — their card offers **Reconsider**, which re-offers the chip.
+   "Back to now" returns; the strip starts at the current space's beginning
+   (events before the last taxonomy change are not scrubbable).
+5. **Gate checks:** save/load a session → events + reflections survive; load
+   a pre-C session file → both reset to empty (defaults-first); export
+   contains the Reflections section; replay at the final position matches
+   the live table for single-candidate logs.
+
+---
+
+## 14. Heuristic-remediation round (2026-06-13 — mode visibility, guards, plain language)
+
+Manual checks for the fixes chosen from the six-lens Norman/Nielsen/Gestalt
+review (touch reachability and keyboard access intentionally skipped:
+desktop research prototype).
+
+1. **Replay announces itself at the table:** Schema view -> open Timeline ->
+   click any marker. The status strip gains an amber "Replay - step N of M -
+   read-only" badge with its own "Back to now" button; clicking it returns
+   to live and collapses the strip back to the pill. At the start stop the
+   badge reads "at the start".
+2. **Pick mode is global and escapable:** Candidate panel -> "- pick" on an
+   empty aspect slot. A violet top-center banner names the awaited aspect in
+   EVERY view ("Picking an option for X - click one in any view - Cancel -
+   Esc"). Esc anywhere cancels; so does the banner button. The banner sits
+   below the schema/cross-tab status strips (top-28 there, top-14
+   elsewhere).
+3. **Two-click candidate delete:** trash icon arms into a red "Delete?"
+   button; a second click within 3 s deletes; waiting 3 s or switching
+   candidates disarms. No modal.
+4. **Lens always names its anchor:** lens on with only one possible anchor ->
+   the pill itself shows "-> [star] <candidate>" or "-> [dot] <node>"
+   (non-interactive); with both anchors the existing switcher appears.
+5. **Plain language:** surface legend says "map reliability: NN (how
+   faithful the 2D layout is)" with a hover explanation; the corpus-support
+   legend row explains washed-out dots in terms of real precedents; the
+   "DESIGN-SPACE SCHEMA" label tooltip decodes ring/struck/italic; cross-tab
+   pill reads "empty = unexplored combination" and empty-cell popovers say
+   "an open opportunity"; strips read "more X than N% of the real projects
+   in the corpus" with a percentile tooltip.
+6. **No bottom collisions:** with the timeline OPEN, proposal/reflection
+   chips sit above its expanded height (bottom-72); with the closed pill,
+   bottom-32; otherwise bottom-24. Check at ~1200 px width where the open
+   strip and the chip column used to overlap.
+7. **Hierarchy, not ink (regression):** nowhere on any canvas should a dark
+   outline mark selection or relation - surface corpus field is pale amber,
+   related projects vivid amber + glow, the selected node carries an
+   own-hue halo + saturation lift, axes selection is white-stroked +
+   saturated. (`#0f172a`/`#475569` strokes are gone from surface and axes.)

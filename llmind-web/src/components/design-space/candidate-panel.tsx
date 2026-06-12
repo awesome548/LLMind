@@ -13,7 +13,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Badge } from '@/src/components/ui/badge';
 import { Button } from '@/src/components/ui/button';
 import {
@@ -28,8 +28,13 @@ import {
 } from '@/src/features/design-space/candidate-utils';
 import { useCandidatePrecedentsQuery } from '@/src/features/design-space/hooks/use-candidate-precedents';
 import { useDraftBriefMutation } from '@/src/features/design-space/hooks/use-draft-brief-mutation';
+import {
+  useSteerMutation,
+  type SteerResult,
+} from '@/src/features/design-space/hooks/use-steer-mutation';
 import { buildExplorationMarkdown, downloadTextFile } from '@/src/lib/export-exploration';
 import { useMindmapStore } from '@/src/store/mindmap-store';
+import { SteerResultCard } from './steer-result-card';
 
 interface CandidatePanelProps {
   descriptionByTopic: Readonly<Record<string, string>>;
@@ -46,6 +51,13 @@ interface CandidatePanelProps {
   onInspectRelevance?: () => void;
   /** Open the Perspectives view to examine this candidate against metrics. */
   onOpenExamine?: () => void;
+  /** C1 informing-back: an applied precedent steer's named qualities become
+   * option proposals (aspect unknown — the chip offers a picker). */
+  onProposeQualities?: (
+    qualities: string[],
+    aspectId: string | null,
+    evidence: string
+  ) => void;
   /** Controlled collapse state (the page collapses panels in the Examine view). */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -65,6 +77,7 @@ export function CandidatePanel({
   onCancelPickChoice,
   onInspectRelevance,
   onOpenExamine,
+  onProposeQualities,
   open,
   onOpenChange,
 }: CandidatePanelProps) {
@@ -83,11 +96,18 @@ export function CandidatePanel({
   const coords = useMindmapStore((s) => s.coords);
   const discovered = useMindmapStore((s) => s.discovered);
   const trackUsage = useMindmapStore((s) => s.trackUsage);
+  const recordEvent = useMindmapStore((s) => s.recordEvent);
+  const events = useMindmapStore((s) => s.events);
+  const reflections = useMindmapStore((s) => s.reflections);
 
   const candidateList = useMemo(
     () => Object.values(candidates).sort((a, b) => a.createdAt - b.createdAt),
     [candidates]
   );
+  // Deletion is the one un-undoable action in the panel — guard it with a
+  // two-click confirm (arms for 3s, disarms on candidate switch), never a
+  // modal. Adding a rubric metric is more guarded than this was.
+  const [deleteArmed, setDeleteArmed] = useState<string | null>(null);
   const active = activeCandidateId ? candidates[activeCandidateId] ?? null : null;
   const rows = useMemo(() => candidateChoiceRows(active, nodes), [active, nodes]);
   const chosenCount = rows.filter((r) => r.optionId).length;
@@ -101,6 +121,58 @@ export function CandidatePanel({
     useCandidatePrecedentsQuery(candidateText);
 
   const { mutateAsync: draftBrief, isPending: drafting } = useDraftBriefMutation();
+
+  // B3 precedent steering: pull the BRIEF toward (or push it away from) a
+  // real precedent — the move is made in language, measured in embedding
+  // space, and ALWAYS shown for veto before it touches the brief. The outcome
+  // snapshots the candidate and the steered brief so a candidate switch
+  // mid-veto can neither show the wrong "before" nor apply to the wrong design.
+  const brief = active?.brief?.trim() || '';
+  const { mutateAsync: steerBrief, isPending: steerPending } = useSteerMutation();
+  const [steerOutcome, setSteerOutcome] = useState<{
+    candidateId: string;
+    briefBefore: string;
+    /** Human-readable move ("pull toward …") for the event + proposals. */
+    evidence: string;
+    result: SteerResult;
+  } | null>(null);
+  const [steeringId, setSteeringId] = useState<string | null>(null);
+  const [steerError, setSteerError] = useState<string | null>(null);
+  const handlePrecedentSteer = async (
+    p: { id: string; Name: string; Descriptions: string },
+    mode: 'toward' | 'away'
+  ) => {
+    if (!brief || !active) return;
+    const steeredId = active.id;
+    const steeredBrief = brief;
+    setSteeringId(p.id);
+    setSteerError(null);
+    try {
+      const reference = `${p.Name}. ${p.Descriptions}`.slice(0, 600);
+      const result = await steerBrief({
+        text: steeredBrief,
+        mode,
+        reference: { text: reference, weight: 0.5 },
+        // The backend caps preserve at 12 — send the most recent commitments.
+        preserve: rows
+          .filter((row) => row.optionTopic)
+          .map((row) => row.optionTopic as string)
+          .slice(0, 12),
+      });
+      setSteerOutcome({
+        candidateId: steeredId,
+        briefBefore: steeredBrief,
+        evidence: `${mode === 'toward' ? 'pull toward' : 'push away from'} "${p.Name}"`,
+        result,
+      });
+      trackUsage('steer_run');
+    } catch (error) {
+      setSteerError(error instanceof Error ? error.message : 'steering failed');
+    } finally {
+      setSteeringId(null);
+    }
+  };
+  const [draftError, setDraftError] = useState<string | null>(null);
   const handleDraftBrief = async () => {
     if (!active) return;
     trackUsage('brief_draft');
@@ -115,11 +187,13 @@ export function CandidatePanel({
           '',
       }));
     if (aspects.length === 0) return;
+    setDraftError(null);
     try {
       const { brief } = await draftBrief({ aspects });
       setCandidateBrief(active.id, brief);
-    } catch {
-      // Surfaced by the disabled/spinner state resetting; drafting is optional.
+    } catch (error) {
+      // A silent failure looked like the button doing nothing.
+      setDraftError(error instanceof Error ? error.message : 'drafting failed');
     }
   };
 
@@ -135,6 +209,8 @@ export function CandidatePanel({
       coords,
       discovered,
       activeCandidateId,
+      events,
+      reflections,
     });
     downloadTextFile(
       `design-space-exploration-${new Date().toISOString().slice(0, 10)}.md`,
@@ -165,7 +241,10 @@ export function CandidatePanel({
         </div>
 
         <CollapsibleContent>
-          <div className="space-y-3 px-4 pb-4">
+          {/* Capped + scrollable: with many aspects, precedents, and a steer
+              veto card, an unbounded panel ran under the bottom navigator
+              (the Context panel above already takes up to 45dvh). */}
+          <div className="max-h-[min(48dvh,520px)] space-y-3 overflow-y-auto px-4 pb-4">
             {/* Candidate switcher */}
             <div className="flex flex-wrap items-center gap-1.5">
               {candidateList.map((candidate) => (
@@ -173,7 +252,8 @@ export function CandidatePanel({
                   key={candidate.id}
                   type="button"
                   onClick={() => setActiveCandidate(candidate.id)}
-                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                  title={candidate.name}
+                  className={`max-w-44 truncate rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
                     candidate.id === activeCandidateId
                       ? 'border-violet-500 bg-violet-500/10 text-violet-700'
                       : 'text-muted-foreground hover:bg-muted'
@@ -201,15 +281,38 @@ export function CandidatePanel({
                     className="h-7 text-xs"
                     aria-label="Candidate name"
                   />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => deleteCandidate(active.id)}
-                    title="Delete candidate"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                  {deleteArmed === active.id ? (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="h-7 shrink-0 gap-1 px-2 text-[11px]"
+                      onClick={() => {
+                        setDeleteArmed(null);
+                        deleteCandidate(active.id);
+                      }}
+                      title="Click again to delete this candidate and its choices (the exploration log keeps its history)"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      Delete?
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => {
+                        const id = active.id;
+                        setDeleteArmed(id);
+                        window.setTimeout(
+                          () => setDeleteArmed((cur) => (cur === id ? null : cur)),
+                          3000
+                        );
+                      }}
+                      title="Delete candidate (asks to confirm)"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
                 </div>
 
                 {/* One choice per aspect */}
@@ -290,6 +393,9 @@ export function CandidatePanel({
                       Draft from choices
                     </button>
                   </div>
+                  {draftError && (
+                    <p className="text-[10px] text-destructive">drafting failed: {draftError}</p>
+                  )}
                   <textarea
                     value={active.brief ?? ''}
                     onChange={(e) => setCandidateBrief(active.id, e.target.value)}
@@ -313,18 +419,78 @@ export function CandidatePanel({
                       Closest precedents {precedentsLoading ? '…' : ''}
                     </p>
                     {(precedents ?? []).map((p) => (
-                      <button
+                      <div
                         key={p.id}
-                        type="button"
-                        onClick={() => onOpenProject(p.id)}
-                        className="flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-0.5 text-left text-[11px] transition-colors hover:bg-muted"
+                        className="group flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-0.5 text-[11px] transition-colors hover:bg-muted"
                       >
-                        <span className="truncate">{p.Name}</span>
+                        <button
+                          type="button"
+                          onClick={() => onOpenProject(p.id)}
+                          className="min-w-0 flex-1 truncate text-left"
+                        >
+                          {p.Name}
+                        </button>
+                        {/* B3: steer the brief relative to this precedent */}
+                        {brief && (
+                          <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+                            {steeringId === p.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={steerPending}
+                                  onClick={() => handlePrecedentSteer(p, 'toward')}
+                                  title="Pull the brief toward this precedent (one move, shown for veto)"
+                                  className="rounded border border-transparent px-1 text-[10px] text-muted-foreground hover:bg-background disabled:opacity-40"
+                                >
+                                  ⇢ pull
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={steerPending}
+                                  onClick={() => handlePrecedentSteer(p, 'away')}
+                                  title="Push the brief away from this precedent (one move, shown for veto)"
+                                  className="rounded border border-transparent px-1 text-[10px] text-muted-foreground hover:bg-background disabled:opacity-40"
+                                >
+                                  ⇠ push
+                                </button>
+                              </>
+                            )}
+                          </span>
+                        )}
                         <span className="shrink-0 tabular-nums text-muted-foreground">
                           {(p.score * 100).toFixed(0)}%
                         </span>
-                      </button>
+                      </div>
                     ))}
+                    {steerError && (
+                      <p className="text-[10px] text-destructive">steering failed: {steerError}</p>
+                    )}
+                    {steerOutcome && steerOutcome.candidateId === active?.id && (
+                      <SteerResultCard
+                        result={steerOutcome.result}
+                        briefBefore={steerOutcome.briefBefore}
+                        onApply={() => {
+                          setCandidateBrief(steerOutcome.candidateId, steerOutcome.result.revised_text);
+                          recordEvent(
+                            'steer_applied',
+                            `Steered "${active?.name ?? 'candidate'}" — ${steerOutcome.evidence}`,
+                            [steerOutcome.candidateId]
+                          );
+                          if (steerOutcome.result.named_qualities.length > 0) {
+                            onProposeQualities?.(
+                              steerOutcome.result.named_qualities,
+                              null,
+                              steerOutcome.evidence
+                            );
+                          }
+                          trackUsage('steer_applied');
+                          setSteerOutcome(null);
+                        }}
+                        onDiscard={() => setSteerOutcome(null)}
+                      />
+                    )}
                   </div>
                 )}
               </>

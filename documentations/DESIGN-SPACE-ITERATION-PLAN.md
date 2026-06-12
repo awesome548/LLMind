@@ -933,12 +933,71 @@ precedent evidence, not absolute coordinates*.
 
 ---
 
-## Part 12 — Iteration K: the living schema (PLANNED — awaiting review)
+## Part 12 — Iteration K: the living schema
 
-*Status: plan only. Nothing below is implemented. Written 2026-06-12 after
-reviewing six sources against the "one field, three projections, one
-inspector" proposal; the evidence kept the lens architecture but overturned
-its center of gravity.*
+*Status: **Phases A, B, and C implemented** (2026-06-12, see K2 implementation
+notes). B1: inspector dock (`candidate-strips.tsx` extracted from the Examine
+view, docked in Design Space's right column while a candidate is active;
+TESTING §10). B2: cross-tab lens as the third Structure view
+(`cross-tab-view.tsx` + `buildCrossTabCells`/`halfMatchingExemplars`;
+`POST /api/corpus/generate-cell`; TESTING §11). B3: steering v1
+(`POST /api/candidates/steer` modes metric/toward/away, strip rails + ghost
+target, precedent ⇢pull/⇠push, veto card with requested-vs-achieved +
+along/orthogonal, `steer_log.jsonl`; TESTING §12). C1: informing-back
+proposal chips (applied steers' named qualities + kept cell ideas → accepted
+options carry provenance `steer`/`cell`); C2: burden-inverted reflections
+(`POST /api/reflections/draft`, chip with async AI draft, Enter/edit/Esc,
+`reflections[eventId]` in sessions + export); C3: the exploration log
+(`events` slice, capped 500, kind-specific refs) + a Fusion-360-style marker
+timeline over the schema (`replay-timeline.tsx` + `buildReplayOverlay`:
+icon-coded step markers, playhead with short-label bubble, detail card with
+the kept reflection and a Reconsider action for dismissed suggestions;
+scrubbing ghosts not-yet-existing options and amber-outlines the clicked
+step's subjects; read-only, clamped to the last taxonomy change; TESTING
+§13). All three loops verified live. Deferred from C1 with rationale: the alignment
+uncovered-quality emitter needs its own LLM analysis pass + caching strategy —
+its channel (proposals) is built; it slots in as a new emitter when costed.
+Written after reviewing six sources against the "one field, three
+projections, one inspector" proposal; the evidence kept the lens architecture
+but overturned its center of gravity.*
+
+**Phase A implementation notes (deviations from the plan, by review):**
+- The schema is NOT a fourth mode: per review it folded into a two-view
+  **Structure** mode (Tree ↔ Schema toggle) — the K5 lens-bar end state
+  arrived early, and mind-map/schema feature overlap is now explicit
+  sub-views of one structure rather than competing modes.
+- The local LLM's context window is **4096 tokens**: one 30-project
+  membership prompt exceeded it outright (and silently degraded a v1 variant
+  that judged from description-only summaries — "LED wall panels" got 0
+  exemplars in an LED-saturated corpus; caught by the K6 spot-check gate).
+  Summaries now include a Details snippet (where the tech vocabulary lives);
+  `ANNOTATION_VERSION` salts the per-option cache for invalidation.
+- The serving model (Qwen3.6 35B A3B) is **thinking-only**: `/no_think` and
+  `chat_template_kwargs.enable_thinking=false` are both ignored (verified
+  live — 100% of tokens land in `reasoning_content`, `content` empty), so a
+  capped response answers nothing and an uncapped one overflows the window.
+  v4 recipe (the K6 gate passer; shared in `backend/corpus/llm.py`):
+  **budget thinking, don't fight it** — `JUDGE_BATCH = 5` chunks small
+  enough that deliberation finishes (~0.7k prompt + ~1.5k thinking), dynamic
+  `max_tokens = LOCAL_CTX − estimate_tokens(prompt) − margin` where the
+  estimate is **charset-aware** (CJK ≥1 token/char — a flat chars//3
+  understated a Chinese-heavy chunk and overflowed the window mid-run), a
+  context-size-400 retry with halved budget as the backstop, and a
+  reasoning-tail salvage (`salvage_from_reasoning`) when the cap is still
+  hit. **Gate result (full 26-option run, 2026-06-12):** LED wall panels →
+  9 receipts led by Taman Anggrek / The Dash Wall / Xindie / Novartis
+  Pavillon (the spot-check ground truth); counts spread 18→0 with no
+  too-broad flags and 5 unprecedented (laser-beam, live-performer,
+  open-city-datasets, smartphone-distributed, transit-hub — all genuinely
+  thin in this corpus); `mean_shortlist_acceptance` **0.231** — the
+  judgment-layer filter does real work on top of embedding aboutness. Cost
+  ~75 s/chunk ≈ 6–10 min/option cold; the per-option cache amortises it (a
+  faster non-thinking judge model would cut cold runs to minutes — user's
+  stack choice). Concurrent clients share one annotation job
+  (`jobs.submit_keyed` on the taxonomy hash) — two browser sessions
+  otherwise raced the LLM through identical judgments. Rule for ALL future prompt design (B2 cell generation, B3
+  steering, C2 reflections): budget for 4k context AND for un-suppressible
+  thinking — chunk evidence, size responses dynamically, never stuff it.
 
 ### K0. The evidence trail (what each source forces)
 
@@ -1127,3 +1186,133 @@ REPORT §6.7); retrieval-path unification (REPORT §6.5 — A2's categorical
 receipts reduce its urgency, but the embedding-side unification still
 stands); semantic zoom on the map (Luminate pattern — nice-to-have, not
 load-bearing).
+
+### K9. Timeline decision records (2026-06-13, after live use of C3)
+
+Three extensions were weighed once the marker timeline was in use. Recorded
+so the reasoning survives the session:
+
+- **Universal timeline (capture tree add/modify/delete + cross-tab
+  investigations in the same log) — DEFERRED, staged.** Pro: process-rhetoric
+  completeness (Dalsgaard & Halskov's full record), filter→inform
+  measurability, one log for the thesis. Con: granularity noise (keystroke
+  events drown commitments), attention ≠ commitment (logging every cross-tab
+  view inflates the record with looking rather than deciding), and
+  tree-state reconstruction cost (replaying structural edits needs tree
+  snapshots or inverse ops — a different machine from the schema overlay).
+  Staging if/when wanted: (1) commit-level tree-diff events (node added/
+  renamed/deleted, debounced per editing burst), (2) thin, filterable
+  investigation events (cross-tab pair opened), (3) Fusion-grade tree
+  reconstruction only if the study demands it.
+- **Restart-from-moment (rollback) — WORTH BUILDING, scoped.** Pro: it is
+  what the timeline visually promises (Fusion's scrub-then-"roll to here"),
+  and backtracking is core to divergence — un-imposing a self-imposed
+  constraint (Onarheim & Biskjaer). Technically moderate: events carry
+  option/aspect/candidate ids, so per-candidate choices and rejections at
+  step *t* can be rebuilt and written back as a single new **`rolled_back`
+  event — the log stays append-only; rollback is itself a step.** Con: an
+  honest rollback restores only commitments and filters — it cannot
+  un-generate options, resurrect deleted nodes, or un-create candidates
+  (the tree is shared infrastructure) — so it must be labelled "restore
+  choices & rejections as of this step" or it over-promises; and cheap
+  rollback mildly cuts against the reflective-record ethos (watch in the
+  study, not a blocker).
+- **Git-like branching — REJECTED.** (1) The candidate layer already *is*
+  the branching mechanism inside a space — multiple candidates are parallel
+  alternatives over one schema (Halskov: one evolving space, many
+  positions); world-level branches duplicate that a level up and fragment
+  attention. (2) Git's payoff is merge, and merging design states has no
+  automatic meaning — you compare, you don't merge — so branching collapses
+  into "multiple saved worlds," which session save/load already provides
+  (save at the fork point = the poor man's branch). (3) Build cost (branch
+  tree UI, id collisions, cache identity) is high for a prototype whose
+  study can capture the same behaviour through session files. Candidates +
+  sessions (at most a one-click "snapshot session" button) give ~80% of the
+  value at ~5% of the cost.
+
+---
+
+## Part 13 — Iteration L candidates: a decision menu from the dissertation
+
+*Written 2026-06-13 after reading the final dissertation ("Automated
+Generation and Exploration of Design Space with LLMs", Uchikoga) against the
+current prototype. The dissertation evaluated the EARLIER LLMind (jsMind
+mind map + Explore-with-AI + related projects; n=1 novice; think-aloud +
+CSI). The current prototype already pays several of its debts; this part
+records what is paid, what remains open, and a menu of directions — the
+user chooses.*
+
+### 13.0 What the dissertation found vs. what is already built
+
+| Dissertation finding / named future work | Current state |
+|---|---|
+| P1 wanted "a table where you can see everything at once"; hybrid table→click→detail | **PAID** — the schema view is the canonical lens; Tree ↔ Schema ↔ Cross-tab share one selection |
+| "Temporal layers… record and compare design spaces at specific points in time" (named future work) | **HALF-PAID** — the timeline records and replays one stream; *comparing two moments* (Dove et al.'s SnapShot pattern) is not built |
+| Luminate critique: manipulability — users must be able to delete/reshape generated structure | **PAID** — add/reject/reopen/choose options, facets, rename, provenance |
+| Dimensions "semantically coherent but… why these seven? is there no more?" — rationale + completeness opacity | **OPEN at the aspect level** — receipts ground *options* in corpus evidence, but the taxonomy's *aspects* carry no exposed why, and nothing probes what is missing |
+| P1's two-step wish: "write down what you're imagining… then it gives you ideas depending on that" → layered inform→filter model | **HALF-PAID** — the taxonomy dialog takes a project overview, but it is transient dialog input: not visible afterwards, not editable, not used by generate-at / cell / steering |
+| Fixation on AI output (Wadinambiarachchi) — the thesis's core tension | **UNINSTRUMENTED** — the tool neither encourages pre-AI articulation nor measures anchoring |
+| n=1 novice; "future research should involve experienced practitioners" | **UNBLOCKED** — events, reflections, stats, exports are study-ready; CSI not integrated; the study has not run |
+| Mind-map asymmetric layout confused P1 | Largely superseded (schema is the overview; canvases share one pan-zoom grammar) |
+
+### 13.1 The menu (choose; effort = relative build cost)
+
+- **L-A. The rationale layer — answer "why these seven?" structurally.**
+  Per-aspect one-line rationale generated at taxonomy time (cached, shown
+  as a hover/chip in schema + context panels: what corpus signal motivated
+  this dimension); plus a *coverage probe*: which corpus projects does the
+  current taxonomy describe poorly → "a dimension may be missing" proposals
+  through the existing C1 chips channel (this IS the deferred alignment
+  emitter, generalised from briefs to the whole corpus). Evidence framing,
+  never verdicts. *Effort: medium. Payoff: directly answers RQ1's biggest
+  negative finding and the discussion's first implication ("lightweight
+  'why' explanations or provenance traces"); changes what a future study
+  can measure (trust).*
+- **L-B. Brief-first entry — promote the project brief to a first-class
+  object.** Persist the taxonomy dialog's overview as an editable, visible
+  PROJECT BRIEF (store slice + chip/panel); thread it through generate-at,
+  cell generation, and steering prompts (the space scoped to the project);
+  default the relevance lens / alignment instruments to it when no
+  candidate exists; include it in session files and export. *Effort:
+  medium-low. Payoff: realises P1's requested inform→filter→inform layered
+  model end-to-end, not just at taxonomy birth.*
+- **L-C. Blind-first ideation + overlap mirror — the anti-fixation
+  instrument.** Optional step on new-taxonomy: the designer drafts their
+  own aspects first (plain chips, ~2 minutes, exactly like the study
+  protocol); the LLM generates; the system then shows the overlap —
+  yours-also-found (convergent), yours-only (kept, provenance `manual`),
+  AI-only (the "conceptual primer" effect P1 described). Overlap ratio
+  logged per session. *Effort: low-medium. Payoff: turns the study
+  protocol into a feature; gives the dissertation's fixation tension a
+  measurement, which neither Luminate nor the prior LLMind had.*
+- **L-D. SnapShot compare (+ the K9 rollback).** Pick two timeline moments
+  → diff of the schema between them (options added/removed, choices and
+  rejections changed, candidates created/moved) rendered as a third
+  read-only state; optionally land K9's "restore choices & rejections as
+  of this step" as an append-only `rolled_back` event. *Effort: low for
+  compare (two `buildReplayOverlay` calls + a diff), low-medium for
+  rollback. Payoff: completes the literally-named future work (record AND
+  compare); cheap.*
+- **L-E. Run the expert study.** Build the thin missing instrumentation —
+  in-tool CSI questionnaire (or exported form), participant/session
+  tagging, one-click study bundle (session + events + reflections + stats
+  + CSI) — then run 3–5 experienced practitioners through the
+  dissertation's own protocol on the CURRENT prototype. *Effort: low
+  build, high logistics. Payoff: the limitation every other line of the
+  dissertation defers to; nothing else converts to thesis evidence without
+  it.*
+- **L-F. Constrainedness mirror (K5 optional, quick win).** Quiet header
+  chip — "3/6 aspects committed · 2 rejected · spread 0.09" — optionally a
+  tiny sparkline from the event log. Informative, never enforcing
+  (Onarheim & Biskjaer's inverted-U). *Effort: low. Payoff: small,
+  theory-pure, demos constraint-centredness.*
+- **L-G. Corpus scale / second domain.** Stays deferred (REPORT §6.7):
+  high cost (scrape, ~209 annotation calls per taxonomy, embedding refit)
+  and the study should see the tool as-is first. Revisit after L-E.
+
+### 13.2 Recommendation (recorded, not binding)
+
+A + B before the study (they change what the study can measure: trust in
+the structure, and brief-scoped exploration), C if the study will probe
+fixation, then E. D and F are quick wins that can ride along with any of
+the above. G stays parked.

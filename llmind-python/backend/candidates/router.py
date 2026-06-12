@@ -3,13 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from typing import Literal
 
 from backend import jobs
 from backend.candidates.service import (
     CandidateServiceError,
     alignment as alignment_service,
     draft_brief as draft_brief_service,
+    steer as steer_service,
 )
 from utils.modes import BackendMode
 
@@ -44,6 +47,58 @@ def draft_brief(payload: DraftBriefRequest) -> dict[str, Any]:
         aspects=[a.model_dump() for a in payload.aspects],
         project_overview=payload.project_overview,
         mode=payload.mode,
+    )
+    return {"job_id": job_id, "status": "pending"}
+
+
+# ── /steer ────────────────────────────────────────────────────────────────────
+
+
+class SteerMetric(BaseModel):
+    pole_a_text: str = Field(min_length=1)
+    pole_b_text: str = Field(min_length=1)
+    # On the strips' corpus-normalised −1..1 scale (where the designer dragged).
+    target_score: float = Field(ge=-1.0, le=1.0)
+
+
+class SteerReference(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    weight: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class SteerRequest(BaseModel):
+    """One deliberate move on a brief (Part 12 B3). The move is made in
+    language; the response carries the requested-vs-achieved measurement."""
+
+    text: str = Field(min_length=1, max_length=4000)
+    mode: Literal["metric", "toward", "away"]
+    metric: SteerMetric | None = None
+    reference: SteerReference | None = None
+    preserve: list[str] = Field(default_factory=list, max_length=12)
+
+    @model_validator(mode="after")
+    def _mode_payload(self) -> "SteerRequest":
+        """Fail fast at the router (422), not minutes later inside the job."""
+        if self.mode == "metric" and self.metric is None:
+            raise ValueError("mode='metric' requires the metric poles")
+        if self.mode in ("toward", "away") and self.reference is None:
+            raise ValueError(f"mode='{self.mode}' requires the reference")
+        return self
+
+
+@router.post("/steer", status_code=status.HTTP_202_ACCEPTED)
+def steer(payload: SteerRequest) -> dict[str, Any]:
+    """Steer the brief along a metric / toward a precedent / away from one
+    (LLM — async job). Returns ``{job_id}``; poll ``GET /api/jobs/{job_id}``.
+    The result is ``{revised_text, named_qualities, measurement}`` — shown as
+    a diff for veto, never auto-committed."""
+    job_id = jobs.submit(
+        steer_service,
+        text=payload.text,
+        mode=payload.mode,
+        metric=payload.metric.model_dump() if payload.metric else None,
+        reference=payload.reference.model_dump() if payload.reference else None,
+        preserve=payload.preserve,
     )
     return {"job_id": job_id, "status": "pending"}
 

@@ -13,7 +13,12 @@ export type { GenerationTrail } from '@/src/features/design-space/types';
 
 const VIEW = 1000; // SVG coordinate space (square)
 const DISCOVERED_COLOR = '#0ea5e9'; // sky — "already discovered" ring + trace lines
-const CORPUS_COLOR = 'rgba(244,140,43,0.9)'; // amber — real corpus projects
+// Information hierarchy by saturation/brightness, NOT by border weight: the
+// corpus is the quiet context field (pale amber); only projects that matter to
+// the current selection light up vivid. Dark outlines added clutter to an
+// already-dense grid (designer feedback) — emphasis is luminance, never ink.
+const CORPUS_COLOR = 'hsl(28 92% 50%)'; // vivid amber — related to your selection
+const CORPUS_MUTED = 'hsl(28 52% 79%)'; // pale amber — every other real project
 // Placement confidence below this renders dashed ("approximate"). Calibrated
 // against the corpus itself: real projects at their own true coordinates score
 // ~0.25 mean, so anything well under that is projection noise.
@@ -107,6 +112,9 @@ interface Props {
   /** Corpus ids of the selected node's related projects — highlighted so the
    * panel's examples are also visible as places on the map. (Similarity mode.) */
   relatedProjects?: ReadonlySet<string>;
+  /** Faceted-schema matches (Part 12 A3): when non-null, corpus glyphs NOT in
+   * the set fade to low opacity (never removed — spatial context preserved). */
+  facetMatched?: ReadonlySet<string> | null;
   /** Relevance-lens painting: when set, corpus glyphs recolor by normalized
    * true-cosine relevance to the anchor, and non-anchor nodes fade. */
   relevance?: RelevanceMap | null;
@@ -181,6 +189,7 @@ export function DesignSpaceSurface({
   rejected,
   onCancelGenerate,
   relatedProjects,
+  facetMatched = null,
   relevance = null,
   lensAnchorId = null,
   lensAnchorLabel = null,
@@ -419,6 +428,7 @@ export function DesignSpaceSurface({
       // related-projects highlight (which stays a Similarity-mode affordance).
       const t = relevance ? relevance.byId[p.id] ?? 0 : null;
       const isRelated = !relevance && (relatedProjects?.has(p.id) ?? false);
+      const facetFaded = facetMatched != null && !facetMatched.has(p.id);
       const s = t != null ? cell * (0.16 + 0.22 * t) : cell * (isRelated ? 0.34 : 0.24);
       if (isRelated) {
         // Soft halo beneath the glyph so the panel's examples pop on the map.
@@ -441,9 +451,10 @@ export function DesignSpaceSurface({
           width={s * 2}
           height={s * 2}
           transform={`rotate(45 ${gx} ${gy})`}
-          fill={t != null ? relevanceColor(t) : CORPUS_COLOR}
-          stroke={isRelated ? '#0f172a' : 'white'}
-          strokeWidth={isRelated ? 1.8 : 0.8}
+          fill={t != null ? relevanceColor(t) : isRelated ? CORPUS_COLOR : CORPUS_MUTED}
+          opacity={facetFaded ? 0.08 : 1}
+          stroke="white"
+          strokeWidth={isRelated ? 1.4 : 0.8}
           className="cursor-pointer hover:brightness-110"
           onMouseEnter={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
@@ -481,7 +492,7 @@ export function DesignSpaceSurface({
         {glyphs}
       </>
     );
-  }, [surface.points, cell, px, py, onSelectProject, relatedProjects, relevance]);
+  }, [surface.points, cell, px, py, onSelectProject, relatedProjects, relevance, facetMatched]);
 
   // ── Spinner ring around the cell being generated ─────────────────────────
   const spinner = useMemo(() => {
@@ -667,12 +678,21 @@ export function DesignSpaceSurface({
           const r = isExact ? baseR * 1.4 : isMatch ? baseR * 1.15 : baseR;
           return (
             <g key={`n-${p.id}`}>
+              {/* Selection = a soft halo in the node's own hue + a saturation
+                  lift, never a dark outline (luminance hierarchy, see top). */}
+              {isExact && !isRejected && (
+                <g pointerEvents="none">
+                  <circle cx={nodeX(p)} cy={nodeY(p)} r={r * 2.6} fill={color} opacity={0.12} />
+                  <circle cx={nodeX(p)} cy={nodeY(p)} r={r * 1.7} fill={color} opacity={0.25} />
+                </g>
+              )}
               <circle
                 cx={nodeX(p)}
                 cy={nodeY(p)}
                 r={r}
                 fill={color}
                 fillOpacity={p.support != null ? 0.3 + 0.7 * p.support : 1}
+                style={isExact ? { filter: 'saturate(1.4) brightness(1.06)' } : undefined}
                 opacity={
                   lensActive && p.id !== lensAnchorId
                     ? 0.12 // the lens is about the corpus; non-anchor ideas recede
@@ -682,8 +702,8 @@ export function DesignSpaceSurface({
                         ? 1
                         : 0.25
                 }
-                stroke={isExact ? '#0f172a' : isMatch ? '#475569' : 'white'}
-                strokeWidth={isExact ? 2.5 : isMatch ? 2 : 1.5}
+                stroke="white"
+                strokeWidth={isExact ? 2 : isMatch ? 1.75 : 1.5}
                 strokeDasharray={lowConfidence ? '4 3' : undefined}
                 className="cursor-pointer transition-[r] duration-100 hover:brightness-110"
                 onMouseEnter={(e) => {
@@ -1010,15 +1030,18 @@ export function DesignSpaceSurface({
           <div className="flex items-center gap-1.5">
             <span
               className="inline-block h-2.5 w-2.5 rotate-45"
-              style={{ background: CORPUS_COLOR }}
+              style={{ background: CORPUS_MUTED }}
             />
             real project — click to view
           </div>
           {(relatedProjects?.size ?? 0) > 0 && (
             <div className="flex items-center gap-1.5">
               <span
-                className="inline-block h-2.5 w-2.5 rotate-45 ring-2 ring-slate-900"
-                style={{ background: CORPUS_COLOR }}
+                className="inline-block h-2.5 w-2.5 rotate-45"
+                style={{
+                  background: CORPUS_COLOR,
+                  boxShadow: '0 0 5px 1.5px hsl(28 92% 50% / 0.5)',
+                }}
               />
               related to your selection
             </div>
@@ -1033,7 +1056,7 @@ export function DesignSpaceSurface({
           </div>
           <div
             className="flex items-center gap-1.5"
-            title="Corpus-support percentile in the original embedding metric — how much corpus evidence exists for this idea"
+            title="How strongly real projects back this idea, relative to the rest of the map: a solid dot has close real precedents; a washed-out dot has almost nothing similar in the corpus (which can mean novel — or unmoored)"
           >
             <span
               className="inline-block h-2.5 w-2.5 rounded-full border"
@@ -1052,9 +1075,9 @@ export function DesignSpaceSurface({
           {trustworthiness != null && (
             <div
               className="mt-0.5 border-t pt-1"
-              title="sklearn trustworthiness of the 2D layout vs the original embedding space — how much neighbourhood structure survived the projection"
+              title="How much of the projects' true similarity survived flattening onto this 2D map (1.0 = perfect; below ~0.7 read positions as approximate, not exact). Technically: sklearn trustworthiness."
             >
-              layout fidelity: {trustworthiness.toFixed(2)} (trustworthiness)
+              map reliability: {trustworthiness.toFixed(2)} (how faithful the 2D layout is)
             </div>
           )}
         </div>

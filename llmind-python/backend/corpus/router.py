@@ -3,6 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from backend import jobs
+from backend.corpus.annotate import annotate_taxonomy, taxonomy_hash
+from backend.corpus.cell import generate_cell
 from backend.corpus.service import (
     CorpusServiceError,
     get_project,
@@ -11,6 +14,79 @@ from backend.corpus.service import (
 )
 
 router = APIRouter(prefix="/api/corpus", tags=["corpus"])
+
+
+class AnnotateOption(BaseModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    desc: str = ""
+
+
+class AnnotateRequest(BaseModel):
+    """The designer's option set (aspect grouping is irrelevant to membership
+    judgments, so the request is flat). Part 12 A2."""
+
+    options: list[AnnotateOption] = Field(min_length=1, max_length=200)
+
+
+class AnnotateJobResponse(BaseModel):
+    job_id: str
+    status: str
+
+
+@router.post(
+    "/annotate", response_model=AnnotateJobResponse, status_code=status.HTTP_202_ACCEPTED
+)
+def post_annotate(payload: AnnotateRequest) -> AnnotateJobResponse:
+    """Annotate the corpus against the taxonomy's options (Halskov-style
+    schema population, automated — Part 12 A2). Returns a ``job_id``; poll
+    ``GET /api/jobs/{job_id}``. Cached per option content, so unchanged
+    options resolve instantly on re-runs."""
+    options = [o.model_dump() for o in payload.options]
+    # Keyed on the option-set identity: concurrent clients (several browser
+    # sessions, the schema AND cross-tab views) share ONE running job instead
+    # of racing the local LLM through identical per-option judgments.
+    job_id = jobs.submit_keyed(
+        f"annotate:{taxonomy_hash(options)}", lambda: annotate_taxonomy(options)
+    )
+    return AnnotateJobResponse(job_id=job_id, status="pending")
+
+
+class CellOption(BaseModel):
+    name: str = Field(min_length=1)
+    desc: str = ""
+
+
+class GenerateCellRequest(BaseModel):
+    """An empty cross-tab cell (Part 12 B2): two option poles + the
+    half-matching precedents the frontend already holds from annotation."""
+
+    aspect_a: str = Field(min_length=1)
+    option_a: CellOption
+    aspect_b: str = Field(min_length=1)
+    option_b: CellOption
+    exemplar_ids: list[str] = Field(default_factory=list, max_length=12)
+
+
+@router.post(
+    "/generate-cell",
+    response_model=AnnotateJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def post_generate_cell(payload: GenerateCellRequest) -> AnnotateJobResponse:
+    """Generate ONE concept into an empty option×option cell (the
+    morphological-combination → candidate-skeleton flow). Returns a
+    ``job_id``; poll ``GET /api/jobs/{job_id}``."""
+    job_id = jobs.submit(
+        lambda: generate_cell(
+            aspect_a=payload.aspect_a,
+            option_a=payload.option_a.model_dump(),
+            aspect_b=payload.aspect_b,
+            option_b=payload.option_b.model_dump(),
+            exemplar_ids=payload.exemplar_ids,
+        )
+    )
+    return AnnotateJobResponse(job_id=job_id, status="pending")
 
 
 class CorpusProjectResponse(BaseModel):

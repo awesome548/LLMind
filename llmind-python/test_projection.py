@@ -304,6 +304,149 @@ def test_log_stats() -> None:
           and all(s["placement"] == "umap" for s in stats if s is not knn))
 
 
+def test_annotation_helpers() -> None:
+    """Part 12 A2 pure parts: hashes, membership parsing, granularity flags."""
+    from backend.corpus import annotate as ann
+
+    h1 = ann.option_content_hash("LED wall panels", "Outdoor-grade LED panels.")
+    check("annotate: content hash is stable",
+          h1 == ann.option_content_hash("LED wall panels", "Outdoor-grade LED panels."))
+    check("annotate: content hash tracks desc changes",
+          h1 != ann.option_content_hash("LED wall panels", "Different desc."))
+    check("annotate: taxonomy hash is order-independent",
+          ann.taxonomy_hash([{"name": "A", "desc": "a"}, {"name": "B", "desc": "b"}])
+          == ann.taxonomy_hash([{"name": "B", "desc": "b"}, {"name": "A", "desc": "a"}]))
+
+    check("annotate: parses a clean JSON array", ann.parse_membership("[2, 5, 11]", 30) == [2, 5, 11])
+    check("annotate: parses array embedded in prose",
+          ann.parse_membership("The exemplifying projects are [1,3].", 30) == [1, 3])
+    check("annotate: salvages a malformed array", ann.parse_membership("[1, 2,]", 30) == [1, 2])
+    check("annotate: bare integers as fallback", ann.parse_membership("1, 4 and 7", 30) == [1, 4, 7])
+    check("annotate: drops out-of-range and duplicates",
+          ann.parse_membership("[0, 2, 2, 31]", 30) == [2])
+    check("annotate: empty array is a valid verdict", ann.parse_membership("[]", 30) == [])
+
+    check("annotate: salvage takes the LAST array in the reasoning tail",
+          ann.salvage_from_reasoning("maybe [1, 2, 3]... no. I will output [1, 6].", 10) == [1, 6])
+    check("annotate: salvage ignores arrays outside the tail window",
+          ann.salvage_from_reasoning("[9, 9]" + " filler" * 100, 10) == [])
+    check("annotate: salvage of empty reasoning is empty",
+          ann.salvage_from_reasoning("", 10) == [])
+
+    from backend.corpus.cell import parse_idea
+
+    check("cell: parses a clean idea object",
+          parse_idea('{"name": "Tide Lines", "desc": "A pier facade."}')
+          == {"name": "Tide Lines", "desc": "A pier facade."})
+    check("cell: finds the object inside prose",
+          parse_idea('Here is the concept: {"name": "A", "desc": "B"} — done.')
+          == {"name": "A", "desc": "B"})
+    check("cell: rejects objects missing name/desc",
+          parse_idea('{"title": "A", "desc": "B"}') is None
+          and parse_idea('{"name": "", "desc": "B"}') is None)
+    check("cell: rejects non-string fields and invalid JSON",
+          parse_idea('{"name": 3, "desc": "B"}') is None
+          and parse_idea('{"name": "A", "desc": }') is None
+          and parse_idea("no object here") is None)
+    check("cell: skips an invalid object and takes the next valid one",
+          parse_idea('{"name": "A", } then {"name": "C", "desc": "D"}')
+          == {"name": "C", "desc": "D"})
+    from backend.corpus.llm import estimate_tokens
+
+    check("llm: ascii estimate ≈ chars/3", estimate_tokens("a" * 300) == 100)
+    check("llm: non-ascii text estimates ≥1 token/char (CJK overflow fix)",
+          estimate_tokens("中" * 100) == 120)
+    check("llm: mixed text sums both regimes",
+          estimate_tokens("a" * 30 + "中" * 10) == 22)
+
+    check("cell: braces inside string values parse (balanced scan, not regex)",
+          parse_idea('{"name": "Grid {modular}", "desc": "Uses {x,y} cells."}')
+          == {"name": "Grid {modular}", "desc": "Uses {x,y} cells."})
+    check("cell: escaped quotes inside values parse",
+          parse_idea('{"name": "The \\"Wave\\"", "desc": "B"}')
+          == {"name": 'The "Wave"', "desc": "B"})
+
+    diag = ann.diagnostics_for({"a": 180, "b": 1, "c": 12, "d": 0}, 209)
+    check("annotate: too-broad flagged at >=80% of corpus", diag["too_broad"] == ["a"])
+    check("annotate: unprecedented flagged at <=1", diag["unprecedented"] == ["b", "d"])
+    check("annotate: empty corpus yields no flags",
+          ann.diagnostics_for({"a": 1}, 0) == {"too_broad": [], "unprecedented": []})
+
+
+def test_reflection_parse() -> None:
+    """C2 pure part: drafted-sentence extraction."""
+    from backend.reflections.router import parse_reflection
+
+    check("reflect: takes the first non-empty line, unquoted",
+          parse_reflection('\n"I chose LED for its daylight legibility."\nextra')
+          == "I chose LED for its daylight legibility.")
+    check("reflect: salvages the reasoning tail's last line when content is empty",
+          parse_reflection("", "thinking...\nmore thinking\nI want the plaza to breathe at night.")
+          == "I want the plaza to breathe at night.")
+    check("reflect: empty everything is None", parse_reflection("", "") is None)
+    check("reflect: caps at 200 chars", len(parse_reflection("x" * 400) or "") == 200)
+
+
+def test_jobs_dedup() -> None:
+    """submit_keyed: concurrent identical requests share one pending job."""
+    import threading
+
+    from backend import jobs
+
+    release = threading.Event()
+    a = jobs.submit_keyed("test-dedup", release.wait, 5)
+    b = jobs.submit_keyed("test-dedup", release.wait, 5)
+    c = jobs.submit_keyed("test-dedup-other", lambda: None)
+    release.set()
+    check("jobs: same-key submits share one pending job", a == b)
+    check("jobs: different keys run separately", c != a)
+
+
+def test_steer_helpers() -> None:
+    """Part 12 B3 pure parts: revision parsing, extent words, displacement."""
+    from backend.candidates.service import (
+        decompose_displacement,
+        parse_steer,
+        steer_extent,
+    )
+
+    check("steer: parses revision with qualities",
+          parse_steer('{"revised_brief": "A pier facade.", "named_qualities": ["durational rhythm", " calm "]}')
+          == {"revised_brief": "A pier facade.", "named_qualities": ["durational rhythm", "calm"]})
+    check("steer: qualities default to empty and cap at 3",
+          parse_steer('{"revised_brief": "X"}') == {"revised_brief": "X", "named_qualities": []}
+          and parse_steer('{"revised_brief": "X", "named_qualities": ["a","b","c","d"]}')
+          == {"revised_brief": "X", "named_qualities": ["a", "b", "c"]})
+    check("steer: rejects empty or missing revision",
+          parse_steer('{"revised_brief": "  "}') is None and parse_steer("prose only") is None)
+    check("steer: finds the object inside prose",
+          parse_steer('Sure: {"revised_brief": "Y", "named_qualities": []} done.')
+          == {"revised_brief": "Y", "named_qualities": []})
+
+    check("steer: extent words scale with the requested delta",
+          steer_extent(0.1) == "subtly" and steer_extent(-0.3) == "moderately"
+          and steer_extent(0.8) == "strongly")
+
+    # Orthonormal basis: move purely along e0 → along = delta, orthogonal = 0;
+    # move purely along e1 while direction is e0 → along 0, orthogonal = |delta|.
+    e = np.eye(3)
+    along, orth = decompose_displacement(e[1], e[1] + 0.4 * e[0], e[0])
+    check("steer: pure along-direction move measures as along", abs(along - 0.4) < 1e-9 and orth < 1e-9)
+    along, orth = decompose_displacement(e[1], e[1] + 0.3 * e[2], e[0])
+    check("steer: orthogonal move measures as orthogonal", abs(along) < 1e-9 and abs(orth - 0.3) < 1e-9)
+    # Away semantics: the axis points AWAY from the reference, so a compliant
+    # move (brief leaving the reference) reads as positive along — the
+    # decomposition direction for away is unit(before − ref), and a move of
+    # +0.4 in that direction must measure +0.4.
+    away_dir = e[0]  # = unit(before − ref) for before=e0-ish, ref further along −e0
+    along, _ = decompose_displacement(e[1], e[1] + 0.4 * away_dir, away_dir)
+    check("steer: compliant away-move is positive along the away axis", abs(along - 0.4) < 1e-9)
+
+    check("steer: revision with braces inside the text parses",
+          parse_steer('{"revised_brief": "A {modular} pier.", "named_qualities": ["x"]}')
+          == {"revised_brief": "A {modular} pier.", "named_qualities": ["x"]})
+
+
 def test_candidate_alignment() -> None:
     """Alignment scoring: agreement + per-aspect lean, on synthetic vectors."""
     from backend.candidates.service import render_draft_brief_prompt, score_alignment
@@ -703,6 +846,10 @@ def main() -> int:
     test_log_stats()
     test_register_alignment()
     test_corpus_support()
+    test_annotation_helpers()
+    test_reflection_parse()
+    test_jobs_dedup()
+    test_steer_helpers()
     test_candidate_alignment()
     test_compute_metrics_offline()
     test_prompts_v4()

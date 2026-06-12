@@ -23,7 +23,9 @@ import { useMindmapStore } from '@/src/store/mindmap-store';
 const VIEW = 1000;
 const MARGIN = 110; // room for pole labels around the plot
 const PLOT = VIEW - 2 * MARGIN;
-const CORPUS_COLOR = 'rgba(244,140,43,0.9)';
+// Matches the surface's hierarchy: corpus = quiet pale-amber context field, so
+// the designer's own options and candidate star stay the foreground.
+const CORPUS_COLOR = 'hsl(28 52% 79%)';
 const CANDIDATE_COLOR = '#7c3aed';
 const POLE_SIM_WARN = 0.85;
 const AXIS_CORR_WARN = 0.6;
@@ -429,7 +431,8 @@ export function AxesView({
                     r={isSelected ? 13 : 10}
                     fill={nodeColor(row.branchIndex, 2)}
                     opacity={isRejected ? 0.2 : 1}
-                    stroke={isSelected ? '#0f172a' : 'white'}
+                    style={isSelected ? { filter: 'saturate(1.4) brightness(1.06)' } : undefined}
+                    stroke="white"
                     strokeWidth={isSelected ? 2.5 : 1.5}
                     strokeDasharray={coord.clipped ? '4 3' : undefined}
                     className="cursor-pointer hover:brightness-110"
@@ -537,8 +540,11 @@ export function AxesView({
             </svg>
             candidate design
           </div>
-          <div className="mt-0.5 border-t pt-1" title="Bipolar cosine scores in the original embedding metric — no projection, no distortion">
-            exact by construction — scaled to this corpus
+          <div
+            className="mt-0.5 border-t pt-1"
+            title="Unlike the map view, these positions are measured directly against the two poles (no 2D flattening), then spread across the range the real projects cover"
+          >
+            positions are exact, relative to the corpus
           </div>
         </div>
       </div>

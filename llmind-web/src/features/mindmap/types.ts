@@ -25,7 +25,9 @@ export type TopicProjectsMap = Readonly<Record<string, ReadonlyArray<MindmapProj
 
 /** Where a generated node came from — kept so every idea can cite its precedents. */
 export interface NodeProvenance {
-  source: 'generate-at' | 'generate-nodes';
+  /** What informed this node into the space (Part 12 C1: accepted proposals
+   * carry their emitter; 'manual' = designer-typed in the schema view). */
+  source: 'generate-at' | 'generate-nodes' | 'manual' | 'steer' | 'cell';
   /** Corpus projects that seeded the generation (id null for non-corpus rows). */
   seedProjects: Array<{ id: string | null; name: string }>;
   /** The design-space location the user clicked (generate-at only). */
@@ -58,6 +60,48 @@ export interface RubricMetric {
   aspectId: string;
   poleAId: string;
   poleBId: string;
+}
+
+/** What can happen to the living schema (Part 12 C3). */
+export type ExplorationEventKind =
+  | 'choose'
+  | 'unchoose'
+  | 'reject'
+  | 'reopen'
+  | 'candidate_created'
+  | 'candidate_deleted'
+  | 'steer_applied'
+  | 'cell_kept'
+  | 'generated'
+  | 'option_added'
+  | 'proposal_dismissed'
+  | 'taxonomy_set';
+
+/** One entry of the append-only exploration log (persisted, capped). The
+ * label is composed AT RECORD TIME — refs may dangle after deletions, the
+ * label stays meaningful (PRT: process capture outlives its objects). */
+export interface ExplorationEvent {
+  id: string;
+  ts: number;
+  kind: ExplorationEventKind;
+  label: string;
+  /** Referenced ids, kind-specific: choose = [optionId, aspectId, candidateId];
+   * unchoose = [aspectId, candidateId]; reject/reopen/option_added = [nodeId];
+   * generated = [...nodeIds]; candidate_* / steer_applied / cell_kept =
+   * [candidateId]. */
+  refs: string[];
+  /** Kind-specific JSON payload — currently only `proposal_dismissed` uses it
+   * (the full proposal, so the timeline can offer "Reconsider"). */
+  detail?: string;
+}
+
+/** A designer's one-line rationale attached to an event (Part 12 C2). */
+export interface Reflection {
+  text: string;
+  /** True when the designer edited (or wrote) it rather than accepting the
+   * AI draft verbatim — the study cares about the difference. */
+  edited: boolean;
+  ts: number;
 }
 
 /** Pruning state for an option ("open" is the implicit default; "chosen" is

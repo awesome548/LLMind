@@ -118,6 +118,66 @@ describe('dual-layer candidates + rubric (Part 10)', () => {
   });
 });
 
+describe('exploration log + reflections (Part 12 C2/C3)', () => {
+  test('discrete actions record events with kind-specific refs', () => {
+    const { createCandidate, setChoice, rejectOption, reopenOption } = store.getState();
+    const candidateId = createCandidate('Mine');
+    setChoice('aspect-a', 'opt-x');
+    rejectOption('opt-y', 'too costly');
+    reopenOption('opt-y');
+    const kinds = store.getState().events.map((e) => e.kind);
+    expect(kinds).toEqual(['candidate_created', 'choose', 'reject', 'reopen']);
+    const choose = store.getState().events[1]!;
+    expect(choose.refs).toEqual(['opt-x', 'aspect-a', candidateId]);
+    expect(store.getState().events[2]!.label).toContain('too costly');
+  });
+
+  test('recordEvent returns the id reflections attach to', () => {
+    const id = store.getState().recordEvent('steer_applied', 'Steered "A"', ['c1']);
+    store.getState().addReflection(id, '  sharper at night  ', true);
+    expect(store.getState().reflections[id]).toMatchObject({
+      text: 'sharper at night',
+      edited: true,
+    });
+  });
+
+  test('the log caps at 500 events and GCs reflections of dropped events', () => {
+    const firstId = store.getState().recordEvent('option_added', 'Added 0', []);
+    store.getState().addReflection(firstId, 'the first why', false);
+    for (let i = 1; i < 510; i++) {
+      store.getState().recordEvent('option_added', `Added ${i}`, []);
+    }
+    const events = store.getState().events;
+    expect(events).toHaveLength(500);
+    expect(events[events.length - 1]!.label).toBe('Added 509');
+    // The first event fell off the front — its reflection must not leak.
+    expect(store.getState().reflections[firstId]).toBeUndefined();
+  });
+
+  test('restoreSession drops reflections for events the snapshot lacks', () => {
+    const id = store.getState().recordEvent('choose', 'Chose X', ['o', 'a', 'c']);
+    store.getState().addReflection(id, 'why', false);
+    const snapshot = { ...selectSessionSnapshot(store.getState()), events: [] };
+    store.getState().restoreSession(snapshot);
+    expect(store.getState().reflections).toEqual({});
+  });
+
+  test('events + reflections round-trip in snapshots, defaults-first', () => {
+    const id = store.getState().recordEvent('choose', 'Chose "LED"', ['o1', 'a1', 'c1']);
+    store.getState().addReflection(id, 'why', false);
+    const snapshot = selectSessionSnapshot(store.getState());
+    expect(snapshot.events).toHaveLength(1);
+    expect(snapshot.reflections[id]).toBeDefined();
+    // A pre-C session file (no events/reflections) restores to empty, not stale.
+    const old = { ...snapshot } as Partial<typeof snapshot>;
+    delete old.events;
+    delete old.reflections;
+    store.getState().restoreSession(old as typeof snapshot);
+    expect(store.getState().events).toEqual([]);
+    expect(store.getState().reflections).toEqual({});
+  });
+});
+
 describe('usage + session', () => {
   test('store actions count their own usage', () => {
     const { createCandidate, setChoice, rejectOption, trackUsage } = store.getState();

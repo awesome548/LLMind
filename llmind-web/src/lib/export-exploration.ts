@@ -4,9 +4,11 @@
 
 import type {
   DesignCandidate,
+  ExplorationEvent,
   MindmapNode,
   NodeProvenance,
   OptionStateEntry,
+  Reflection,
 } from '@/src/features/mindmap/types';
 import type { CoordMap, GenerationTrail } from '@/src/features/design-space/types';
 import { candidateChoiceRows } from '@/src/features/design-space/candidate-utils';
@@ -25,6 +27,9 @@ export interface ExplorationSnapshot {
   coords: Readonly<CoordMap>;
   discovered: Readonly<Record<string, GenerationTrail>>;
   activeCandidateId: string | null;
+  /** C2/C3 — optional so older callers and tests stay valid. */
+  events?: ReadonlyArray<ExplorationEvent>;
+  reflections?: Readonly<Record<string, Reflection>>;
 }
 
 export function buildExplorationMarkdown(snapshot: ExplorationSnapshot): string {
@@ -106,6 +111,23 @@ export function buildExplorationMarkdown(snapshot: ExplorationSnapshot): string 
         : '';
       lines.push(
         `- **${topic}** — ${p.source}${target}, seeded by: ${seeds} (${new Date(p.createdAt).toISOString()})`
+      );
+    }
+    lines.push('');
+  }
+
+  // C2: the designer's rationale, attached to what it was about (the
+  // documentation PRT asked humans to type, captured along the way).
+  const reflected = (snapshot.events ?? []).filter(
+    (event) => snapshot.reflections?.[event.id]
+  );
+  if (reflected.length > 0) {
+    lines.push('## Reflections');
+    lines.push('');
+    for (const event of reflected) {
+      const reflection = snapshot.reflections![event.id]!;
+      lines.push(
+        `- ${event.label} — “${reflection.text}”${reflection.edited ? '' : ' *(AI draft accepted)*'} (${new Date(reflection.ts).toISOString()})`
       );
     }
     lines.push('');

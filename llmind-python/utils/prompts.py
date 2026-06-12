@@ -118,6 +118,99 @@ INSTRUCTIONS:
 """
 
 
+# Part 12 A2: corpus annotation — one call per OPTION over its embedding
+# shortlist. Membership judgment ("genuinely exemplifies"), not similarity:
+# the shortlist already handled aboutness; the LLM decides exemplification.
+ANNOTATE_OPTION_PROMPT = """TASK:
+You are annotating a corpus of real media-architecture projects against ONE
+design option. Decide, for each project, whether the project GENUINELY
+EXEMPLIFIES the option — it must actually have/do this, not merely relate to
+the theme.
+
+DESIGN OPTION:
+{{OPTION_NAME}}: {{OPTION_DESC}}
+
+PROJECTS:
+{{PROJECTS}}
+
+INSTRUCTIONS:
+- Judge from BOTH the concept text and the [Details: ...] technical notes —
+  the technical notes often name the display/interaction technology.
+- Be strict about the option's substance, not its exact wording: a project
+  exemplifies the option when its text clearly indicates it.
+- Respond with ONLY a JSON array of the numbers of the exemplifying projects,
+  e.g. [2, 5, 11]. An empty array [] is a valid answer. No other text.
+"""
+
+
+# Part 12 B2: cross-tab cell generation — one call per EMPTY option×option
+# cell. Morphological combination (Halskov: empty cells are exact, nameable
+# gaps): the prompt names the gap and seeds with half-matching precedents.
+GENERATE_CELL_PROMPT = """TASK:
+You are exploring a design space of media architecture. In the corpus of real
+projects, NO precedent combines these two commitments — this is an exact,
+nameable gap:
+
+- {{ASPECT_A}}: {{OPTION_A_NAME}} — {{OPTION_A_DESC}}
+- {{ASPECT_B}}: {{OPTION_B_NAME}} — {{OPTION_B_DESC}}
+
+NEARBY PRECEDENTS (each satisfies ONE of the two, not both):
+{{EXEMPLARS}}
+
+INSTRUCTIONS:
+- Propose exactly ONE new project concept that genuinely commits to BOTH.
+- Write it in the same register as the precedents: a concrete site, medium,
+  and behaviour — not a theme statement.
+- desc is 2-4 sentences, in the style of a real project description.
+- Respond with ONLY a JSON object: {"name": "...", "desc": "..."}. No other
+  text.
+"""
+
+
+# Part 12 B3: steering — ONE deliberate move on a candidate's brief, made in
+# language (the evidence rule: deltas brief the LLM and measure the result;
+# embeddings never construct text).
+STEER_PROMPT = """TASK:
+Revise a media-architecture design brief by ONE deliberate move, keeping its
+identity otherwise intact.
+
+CURRENT BRIEF:
+{{BRIEF}}
+
+THE MOVE:
+{{MOVE}}
+
+PRESERVE (do not weaken these):
+{{PRESERVE}}
+
+INSTRUCTIONS:
+- Same project, same register, similar length.
+- Make the move CONCRETE: change materials, behaviours, siting, or program —
+  not adjectives.
+- Respond with ONLY a JSON object:
+  {"revised_brief": "...", "named_qualities": ["...", "..."]}
+  where named_qualities are 1-3 short names for the qualities the move added
+  or strengthened.
+"""
+
+
+# Part 12 C2: burden-inverted reflection capture — the system drafts the
+# one-line rationale a designer might write for what they just did; the
+# designer accepts, edits, or skips it. Never authoritative, always editable.
+REFLECT_PROMPT = """TASK:
+A designer exploring a media-architecture design space just did this:
+
+{{EVENT}}
+
+Draft the ONE-LINE rationale they might note down for it.
+
+INSTRUCTIONS:
+- First person, specific to this act, under 18 words.
+- A reason or intention, not a description of the act itself.
+- Respond with ONLY the sentence. No preamble, no quotes.
+"""
+
+
 # Version tag logged with every generate-at call so prompt/seeding variants can
 # be compared in data/projection/generate_log.jsonl. Bump when the prompt or
 # the seeding strategy changes behaviour.

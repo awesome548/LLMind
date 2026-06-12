@@ -39,6 +39,13 @@ interface MindmapStoreState {
   rubric: RubricMetric[];            // persistent examination metrics
   usage: Record<string, number>;     // feature-usage counters (instrumentation)
 
+  // ── The loops (Part 12 C2/C3) ──────────────────────────────────
+  events: ExplorationEvent[];        // append-only log {id, ts, kind, label, refs},
+                                     // capped 500 — labels composed at record time
+                                     // so they outlive deletions; drives the
+                                     // schema replay slider
+  reflections: Record<string, Reflection>; // event.id → {text, edited, ts}
+
   // ── Actions ────────────────────────────────────────────────────
   selectTopic(input: MindmapSelectionInput): void;
   setTaxonomy(taxonomy: TaxonomyInput): void;  // ALSO rebuilds nodes + wipes all
@@ -61,6 +68,10 @@ interface MindmapStoreState {
   rejectOption(nodeId, reason?): void;
   reopenOption(nodeId): void;
   trackUsage(event): void;
+  recordEvent(kind, label, refs?): string;  // C3: appends + returns id; choose/
+                                            // reject/reopen/candidate create+delete/
+                                            // taxonomy_set record their own events
+  addReflection(eventId, text, edited): void;  // C2
   restoreSession(snapshot): void;   // defaults-first, so old session files reset new slices
   resetMindmapStore(): void;
 }
@@ -75,7 +86,8 @@ payload): `contextText`, `contextDescription`, `selectedTopic`,
 `taxonomy`, **`nodes`**, **`coords`**, **`discovered`**, **`provenance`**,
 **`descriptionById`**, **`candidates`** (incl. briefs + trails),
 **`activeCandidateId`**, **`optionState`**, **`axesConfig`**, **`rubric`**,
-**`usage`**.
+**`usage`**, **`events`**, **`reflections`**. New slices restore
+defaults-first, so pre-C session files reset them instead of leaking state.
 
 The Related Projects panel reads React Query data directly (nothing
 project-related lives in the store). The locate "attempted once" guard is

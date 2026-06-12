@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, Optional
 
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llmind-job")
 _jobs: Dict[str, Dict[str, Any]] = {}
+_keyed: Dict[str, str] = {}  # dedup key → job_id of the in-flight run
 _lock = threading.Lock()
 _TTL_SECONDS = 1800  # drop finished jobs after 30 minutes
 
@@ -66,6 +67,22 @@ def submit(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> str:
                     _jobs[job_id].update(status="error", detail=detail, updated=time.time())
 
     _executor.submit(_run)
+    return job_id
+
+
+def submit_keyed(key: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> str:
+    """``submit()``, deduplicated by ``key``: while a job with the same key is
+    still pending, its ``job_id`` is returned instead of starting duplicate
+    work. Guards expensive idempotent jobs that several clients request at
+    once — e.g. two browser sessions both annotating the same taxonomy, which
+    would otherwise race the local LLM through identical judgments."""
+    with _lock:
+        existing = _keyed.get(key)
+        if existing and _jobs.get(existing, {}).get("status") == "pending":
+            return existing
+    job_id = submit(fn, *args, **kwargs)
+    with _lock:
+        _keyed[key] = job_id
     return job_id
 
 

@@ -19,6 +19,7 @@ and are polled via `src/lib/run-job.ts` (1.5 s interval, 5 min timeout,
 | `useAxesQuery(params)` | `POST /api/projection/axes` | Perspectives "Cross two metrics" tab; key = poles + items; 10 min stale |
 | `useAlignmentQuery(params)` | `POST /api/candidates/alignment` | Brief↔choices agreement + per-aspect leans (Examine headline/consistency strips); 5 min stale |
 | `useMetricsQuery(params)` | `POST /api/projection/metrics` | Corpus + brief scores along the strip metrics; response order = request order; 10 min stale |
+| `useAnnotationQuery(options, enabled)` | `POST /api/corpus/annotate` (job) | Corpus annotation (Part 12 A2): per-option counts + receipts; enabled in the Schema and Cross-tab views; key = option texts; `staleTime: Infinity` (server caches per option) |
 
 ## Mutations
 
@@ -30,6 +31,9 @@ and are polled via `src/lib/run-job.ts` (1.5 s interval, 5 min timeout,
 | `useLocateNodesMutation` | `POST /api/projection/locate` | Places nodes in the frozen space; points carry `confidence` + `clipped` + `support` (corpus-support percentile) |
 | `usePeekMutation` | `POST /api/projection/peek` | Gap preview (no LLM): seeds, nearby ideas, parent aspect |
 | `useDraftBriefMutation` | `POST /api/candidates/draft-brief` (job) | LLM-drafts the candidate's brief from its choices — the designer edits the result |
+| `useGenerateCellMutation` | `POST /api/corpus/generate-cell` (job) | B2: one concept into an empty cross-tab cell (pole-conditioned, half-matching exemplar seeds); kept results become candidate skeletons |
+| `useSteerMutation` | `POST /api/candidates/steer` (job) | B3: one steering move on the brief (metric / toward / away); returns revision + requested-vs-achieved measurement; ALWAYS shown as a veto card |
+| `useDraftReflectionMutation` | `POST /api/reflections/draft` (job) | C2: drafts the one-line rationale for an exploration event; the chip opens immediately and the draft fills only if the designer hasn't typed |
 
 Regenerate the OpenAPI types after backend model changes (see FRONTEND.md);
 app code imports types from `src/types/api-aliases.ts`, never `openapi.ts`.

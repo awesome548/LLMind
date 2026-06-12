@@ -41,6 +41,31 @@ describe('buildExplorationMarkdown', () => {
     expect(markdown).toContain('1 cells explored');
   });
 
+  test('includes reflections attached to events (C2)', () => {
+    const markdown = buildExplorationMarkdown({
+      nodes: tree,
+      descriptionByTopic: {},
+      descriptionById: {},
+      optionState: {},
+      candidates: {},
+      provenance: {},
+      coords: {},
+      discovered: {},
+      activeCandidateId: null,
+      events: [
+        { id: 'ev-1', ts: 0, kind: 'choose', label: 'Chose "LED" for Display', refs: ['o1', 'a1', 'c1'] },
+        { id: 'ev-2', ts: 1, kind: 'reject', label: 'Rejected "Laser"', refs: ['o2'] },
+      ],
+      reflections: {
+        'ev-1': { text: 'Daylight legibility matters most here.', edited: false, ts: 5 },
+      },
+    });
+    expect(markdown).toContain('## Reflections');
+    expect(markdown).toContain('Chose "LED" for Display — “Daylight legibility matters most here.”');
+    expect(markdown).toContain('*(AI draft accepted)*');
+    expect(markdown).not.toContain('Rejected "Laser" —'); // no reflection → not listed
+  });
+
   test('omits provenance for nodes no longer in the tree', () => {
     const markdown = buildExplorationMarkdown({
       nodes: tree,

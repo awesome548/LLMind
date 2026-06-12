@@ -8,12 +8,15 @@ import {
   Grid3x3,
   Home,
   Info,
+  LayoutGrid,
   Loader2,
+  Microscope,
   Network,
   PanelsRightBottom,
   Save,
   Sparkles,
   Star,
+  Table2,
   Zap,
   type LucideIcon,
 } from 'lucide-react';
@@ -30,7 +33,23 @@ import {
 import { useGenerateAtMutation } from '@/src/features/design-space/hooks/use-generate-at-mutation';
 import { useCorpusProjectQuery } from '@/src/features/design-space/hooks/use-corpus-project';
 import { useRelevanceQuery } from '@/src/features/design-space/hooks/use-relevance-query';
+import { CandidateStrips } from '@/src/components/design-space/candidate-strips';
+import { CrossTabView, type KeepCellIdea } from '@/src/components/design-space/cross-tab-view';
 import { ExamineView } from '@/src/components/design-space/examine-view';
+import { ProposalChips, type OptionProposal } from '@/src/components/design-space/proposal-chips';
+import {
+  ReflectionChip,
+  type ReflectionPromptState,
+} from '@/src/components/design-space/reflection-chip';
+import { ReplayTimeline } from '@/src/components/design-space/replay-timeline';
+import { buildReplayOverlay } from '@/src/features/design-space/replay-utils';
+import { useDraftReflectionMutation } from '@/src/features/design-space/hooks/use-draft-reflection-mutation';
+import { SchemaTable } from '@/src/components/design-space/schema-table';
+import {
+  buildSchemaColumns,
+  computeFacetMatches,
+} from '@/src/features/design-space/schema-utils';
+import { useAnnotationQuery } from '@/src/features/design-space/hooks/use-annotation-query';
 import { CandidatePanel } from '@/src/components/design-space/candidate-panel';
 import { CompareCandidatesDialog } from '@/src/components/design-space/compare-candidates-dialog';
 import {
@@ -47,7 +66,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/src/components/ui/collapsible';
-import { ScrollArea } from '@/src/components/ui/scroll-area';
 import {
   SCHEMA_MINDMAP_NODES,
   SCHEMA_DESCRIPTION_BY_TOPIC,
@@ -165,12 +183,17 @@ export default function MindmapPage() {
   const createCandidate = useMindmapStore((state) => state.createCandidate);
   const appendCandidateTrail = useMindmapStore((state) => state.appendCandidateTrail);
   const setChoice = useMindmapStore((state) => state.setChoice);
+  const setCandidateBrief = useMindmapStore((state) => state.setCandidateBrief);
   const optionState = useMindmapStore((state) => state.optionState);
   const rejectOption = useMindmapStore((state) => state.rejectOption);
   const reopenOption = useMindmapStore((state) => state.reopenOption);
   const pruneMissingNodes = useMindmapStore((state) => state.pruneMissingNodes);
   const trackUsage = useMindmapStore((state) => state.trackUsage);
   const restoreSession = useMindmapStore((state) => state.restoreSession);
+  const events = useMindmapStore((state) => state.events);
+  const reflections = useMindmapStore((state) => state.reflections);
+  const recordEvent = useMindmapStore((state) => state.recordEvent);
+  const addReflection = useMindmapStore((state) => state.addReflection);
   const { mutateAsync: generateNodes, isPending: isGeneratingNodes } = useGenerateNodesMutation();
 
   const [selection, setSelection] = useState<MindmapSelection>({
@@ -181,11 +204,17 @@ export default function MindmapPage() {
   // First-run helper: auto-open the taxonomy dialog only AFTER the persisted
   // store has rehydrated. At first render `taxonomy` is still null even when
   // one is persisted (the persist middleware hydrates asynchronously), which
-  // used to flash this dialog open on every reload.
+  // used to flash this dialog open on every reload. Offered ONCE (tracked in
+  // the persisted usage counters) — working with the default schema is a
+  // valid choice, not something to nag about on every load.
   const [taxonomyDialogOpen, setTaxonomyDialogOpen] = useState(false);
   useEffect(() => {
     const openIfFirstRun = () => {
-      if (!useMindmapStore.getState().taxonomy) setTaxonomyDialogOpen(true);
+      const store = useMindmapStore.getState();
+      if (!store.taxonomy && !store.usage['taxonomy_dialog_offered']) {
+        setTaxonomyDialogOpen(true);
+        store.trackUsage('taxonomy_dialog_offered');
+      }
     };
     if (useMindmapStore.persist.hasHydrated()) {
       openIfFirstRun();
@@ -201,7 +230,17 @@ export default function MindmapPage() {
   );
 
   // ── Design-space view ──────────────────────────────────────────────────────
-  const [view, setView] = useState<'map' | 'space' | 'axes'>('map');
+  const [view, setView] = useState<'map' | 'space' | 'axes' | 'schema' | 'crosstab'>('map');
+  // Which tab Perspectives opens on — 'scatter' when entered via the
+  // cross-tab's "show as continuous scatter" drill-down.
+  const [examineInitialTab, setExamineInitialTab] = useState<'strips' | 'scatter'>('strips');
+  // Document views (vs canvas views) — the floating panels icon-collapse
+  // below xl in these, sharing one layout grammar.
+  const dockedView = view === 'axes' || view === 'schema' || view === 'crosstab';
+  // A3 facets: transient (never persisted) ± option filters driving the map's
+  // faceted fading; set from the schema table.
+  const [facetInclude, setFacetInclude] = useState<ReadonlySet<string>>(new Set());
+  const [facetExclude, setFacetExclude] = useState<ReadonlySet<string>>(new Set());
   // The side panels are canvas overlays; the Examine view is a document. Below
   // xl the two cannot sit side by side, so entering Perspectives collapses the
   // panels — and in that view a closed panel shrinks to a small icon button
@@ -210,15 +249,29 @@ export default function MindmapPage() {
   const [contextPanelOpen, setContextPanelOpen] = useState(true);
   const [projectsPanelOpen, setProjectsPanelOpen] = useState(true);
   const [candidatePanelOpen, setCandidatePanelOpen] = useState(false);
+  // B1 inspector dock: the Examine strips inside the map view, so examining a
+  // candidate needs no trip to Perspectives. Renders only while a candidate
+  // is active; open by default.
+  const [inspectorOpen, setInspectorOpen] = useState(true);
   useEffect(() => {
-    if (view === 'axes' && !window.matchMedia('(min-width: 1280px)').matches) {
-      setContextPanelOpen(false);
-      setProjectsPanelOpen(false);
-      setCandidatePanelOpen(false);
-    } else if (view !== 'axes') {
+    const docked = view === 'axes' || view === 'schema' || view === 'crosstab';
+    const xl = window.matchMedia('(min-width: 1280px)');
+    const collapseIfCramped = () => {
+      // Also fires when the window RESIZES below xl while already in a
+      // docked view — entering alone would leave open panels overlapping.
+      if (docked && !xl.matches) {
+        setContextPanelOpen(false);
+        setProjectsPanelOpen(false);
+        setCandidatePanelOpen(false);
+      }
+    };
+    collapseIfCramped();
+    if (!docked) {
       setContextPanelOpen(true);
       setProjectsPanelOpen(true);
     }
+    xl.addEventListener('change', collapseIfCramped);
+    return () => xl.removeEventListener('change', collapseIfCramped);
   }, [view]);
   // Relevance lens: an on/off overlay on the design space (not a separate
   // mode — same view, same interactions, extra paint). Anchor is switchable
@@ -229,6 +282,17 @@ export default function MindmapPage() {
   // arms this; the next click on an option of that aspect (in ANY view)
   // fills the slot.
   const [pendingChoiceAspectId, setPendingChoiceAspectId] = useState<string | null>(null);
+  // Armed pick mode is a MODE — it needs a global escape hatch, not only the
+  // panel button that armed it (a mis-armed slot would otherwise require
+  // navigating back to the Candidate panel to cancel).
+  useEffect(() => {
+    if (!pendingChoiceAspectId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPendingChoiceAspectId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pendingChoiceAspectId]);
   const [pendingCell, setPendingCell] = useState<[number, number] | null>(null);
   // The currently-traced connector (transient; the discovered set persists).
   const [activeLine, setActiveLine] = useState<GenerationTrail | null>(null);
@@ -318,6 +382,317 @@ export default function MindmapPage() {
 
   const selectedProvenance = selectedNode ? provenance[selectedNode.id] : undefined;
 
+  // ── Schema view (Part 12 A1–A3): columns, corpus annotation, facets ────────
+  const schemaColumns = useMemo(
+    () =>
+      buildSchemaColumns(
+        nodes,
+        activeDescriptionByTopic,
+        descriptionById,
+        optionState,
+        (activeCandidateId ? candidates[activeCandidateId]?.choices : undefined) ?? {},
+        provenance
+      ),
+    [nodes, activeDescriptionByTopic, descriptionById, optionState, activeCandidateId, candidates, provenance]
+  );
+  const annotationInputs = useMemo(
+    () =>
+      schemaColumns.flatMap((col) =>
+        col.options.map((o) => ({ id: o.id, name: o.name, desc: o.desc }))
+      ),
+    [schemaColumns]
+  );
+  const {
+    data: annotation,
+    isFetching: isAnnotating,
+    error: annotationError,
+  } = useAnnotationQuery(annotationInputs, view === 'schema' || view === 'crosstab');
+  const facetMatched = useMemo(() => {
+    if (!annotation) return null;
+    return computeFacetMatches(
+      annotation.options,
+      [...facetInclude],
+      [...facetExclude],
+      (surface?.points ?? []).map((p) => p.id)
+    );
+  }, [annotation, facetInclude, facetExclude, surface]);
+  const handleToggleFacet = (optionId: string, kind: 'include' | 'exclude') => {
+    const [get, set, other, setOther] =
+      kind === 'include'
+        ? ([facetInclude, setFacetInclude, facetExclude, setFacetExclude] as const)
+        : ([facetExclude, setFacetExclude, facetInclude, setFacetInclude] as const);
+    const next = new Set(get);
+    if (next.has(optionId)) next.delete(optionId);
+    else {
+      next.add(optionId);
+      if (other.has(optionId)) {
+        const o = new Set(other);
+        o.delete(optionId);
+        setOther(o);
+      }
+    }
+    set(next);
+    trackUsage('facet_toggle');
+  };
+  const handleSchemaSelect = (optionId: string) => {
+    for (const col of schemaColumns) {
+      const opt = col.options.find((o) => o.id === optionId);
+      if (opt) {
+        handleSelect({
+          topic: opt.name,
+          lineage: [nodes[0]?.topic ?? '', col.name, opt.name],
+          nodeId: optionId,
+        });
+        return;
+      }
+    }
+  };
+  // Informing the space (Halskov): an added option joins the tree with its
+  // provenance (manual typing or an accepted C1 proposal), gets a
+  // description, locates automatically, and is logged as an event. Reads the
+  // tree FRESH from the store (not the render closure) so back-to-back
+  // inserts — two proposals accepted quickly — never clobber each other, and
+  // refuses gracefully when the target aspect was deleted meanwhile.
+  const insertOptionNode = (
+    aspectId: string,
+    name: string,
+    desc: string,
+    source: 'manual' | 'steer' | 'cell'
+  ): boolean => {
+    const current = useMindmapStore.getState().nodes;
+    const aspect = current[0]?.children?.find((a) => a.id === aspectId);
+    if (!aspect) return false;
+    const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const existing = new Set<string>();
+    collectIds(current, existing);
+    let id = base || `option-${existing.size}`;
+    for (let n = 2; existing.has(id); n++) id = `${base}-${n}`;
+    const insert = (list: ReadonlyArray<MindmapNode>): MindmapNode[] =>
+      list.map((node) =>
+        node.id === aspectId
+          ? { ...node, children: [...(node.children ?? []), { id, topic: name }] }
+          : { ...node, children: node.children ? insert(node.children) : undefined }
+      );
+    setNodes(insert(current));
+    if (desc) mergeDescriptions({ [id]: desc });
+    recordProvenance({ [id]: { source, seedProjects: [], createdAt: Date.now() } });
+    recordEvent('option_added', `Added option "${name}" under ${aspect.topic} (${source})`, [id]);
+    return true;
+  };
+  const handleAddOption = (aspectId: string, name: string, desc: string) => {
+    insertOptionNode(aspectId, name, desc, 'manual');
+    trackUsage('schema_add_option');
+  };
+
+  // ── C1: informing-back proposals (transient — only ACCEPTED ones persist;
+  // dismissals are EVENTS, so the timeline can resurface them) ───────────────
+  const [proposals, setProposals] = useState<OptionProposal[]>([]);
+  const enqueueProposals = useCallback(
+    (
+      items: Array<{ text: string; desc?: string }>,
+      aspectId: string | null,
+      evidence: string,
+      source: OptionProposal['source']
+    ) => {
+      setProposals((prev) => {
+        const next = [...prev];
+        for (const item of items) {
+          const text = item.text.trim();
+          if (!text) continue;
+          if (
+            next.some(
+              (p) => p.text.toLowerCase() === text.toLowerCase() && p.aspectId === aspectId
+            )
+          )
+            continue;
+          next.push({
+            id: `prop-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+            aspectId,
+            text,
+            desc: item.desc ?? '',
+            source,
+            evidence,
+          });
+        }
+        return next.slice(-4); // keep only the NEWEST few — chips, not a backlog
+      });
+    },
+    []
+  );
+  const handleProposeQualities = useCallback(
+    (qualities: string[], aspectId: string | null, evidence: string) =>
+      enqueueProposals(qualities.map((text) => ({ text })), aspectId, evidence, 'steer'),
+    [enqueueProposals]
+  );
+  const handleAcceptProposal = (proposal: OptionProposal, aspectId: string) => {
+    // If the aspect vanished while the chip waited, the proposal is moot —
+    // the chip clears either way, but nothing phantom is recorded.
+    const inserted = insertOptionNode(aspectId, proposal.text, proposal.desc, proposal.source);
+    setProposals((prev) => prev.filter((p) => p.id !== proposal.id));
+    trackUsage(inserted ? 'proposal_accepted' : 'proposal_aspect_missing');
+  };
+  const handleDismissProposal = (proposalId: string) => {
+    const proposal = proposals.find((p) => p.id === proposalId);
+    setProposals((prev) => prev.filter((p) => p.id !== proposalId));
+    if (proposal) {
+      // A dismissed idea is history, not garbage — the event carries the
+      // full proposal so the timeline's "Reconsider" can re-offer it.
+      recordEvent(
+        'proposal_dismissed',
+        `Dismissed suggestion "${proposal.text}" (from ${proposal.evidence})`,
+        proposal.aspectId ? [proposal.aspectId] : [],
+        JSON.stringify(proposal)
+      );
+    }
+    trackUsage('proposal_dismissed');
+  };
+  const handleReconsiderProposal = (proposal: OptionProposal) => {
+    enqueueProposals(
+      [{ text: proposal.text, desc: proposal.desc }],
+      proposal.aspectId,
+      proposal.evidence,
+      proposal.source
+    );
+    trackUsage('proposal_reconsidered');
+  };
+  const aspectList = useMemo(
+    () => (nodes[0]?.children ?? []).map((a) => ({ id: a.id, name: a.topic })),
+    [nodes]
+  );
+
+  // B2: a kept cell idea becomes a candidate skeleton — committed to the two
+  // options that named the gap, with the generated concept as its brief (the
+  // morphological-combination → candidate flow). The new candidate is active,
+  // so setChoice lands on it; the brief drives its star via the locate effect.
+  const handleKeepCellIdea = ({ aspectAId, optionAId, aspectBId, optionBId, idea }: KeepCellIdea) => {
+    const id = createCandidate(idea.name);
+    setChoice(aspectAId, optionAId);
+    setChoice(aspectBId, optionBId);
+    setCandidateBrief(id, idea.desc);
+    recordEvent('cell_kept', `Kept gap concept "${idea.name}" as a candidate`, [id]);
+    // C1: the kept concept informs BOTH parent aspects — offer it as an
+    // option under each (the designer decides whether it earns vocabulary).
+    const item = [{ text: idea.name, desc: idea.desc }];
+    enqueueProposals(item, aspectAId, `the kept gap concept "${idea.name}"`, 'cell');
+    enqueueProposals(item, aspectBId, `the kept gap concept "${idea.name}"`, 'cell');
+    // Visible landing: open the Candidate panel so the new skeleton is seen
+    // arriving (a silently-kept idea reads as a no-op).
+    setCandidatePanelOpen(true);
+    trackUsage('cell_kept');
+  };
+
+  // ── C2: reflection capture (burden-inverted, never modal) ──────────────────
+  const [reflectionPrompt, setReflectionPrompt] = useState<ReflectionPromptState | null>(null);
+  const { mutateAsync: draftReflection } = useDraftReflectionMutation();
+  const lastEventId = events.length > 0 ? events[events.length - 1]!.id : null;
+  const seenEventRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    // Baseline on mount so restored/persisted logs never pop a chip.
+    if (seenEventRef.current === undefined) {
+      seenEventRef.current = lastEventId;
+      return;
+    }
+    if (!lastEventId || seenEventRef.current === lastEventId) return;
+    seenEventRef.current = lastEventId;
+    const stored = useMindmapStore.getState();
+    const event = stored.events[stored.events.length - 1];
+    if (!event || event.id !== lastEventId) return;
+    const REFLECTABLE = ['choose', 'reject', 'steer_applied', 'candidate_created', 'cell_kept', 'generated'];
+    if (!REFLECTABLE.includes(event.kind)) return;
+    // Session restores replay old events wholesale — only fresh acts prompt.
+    if (Date.now() - event.ts > 10_000) return;
+    setReflectionPrompt({
+      eventId: event.id,
+      label: event.label,
+      drafted: false,
+      draftValue: '',
+    });
+    // Drafting waits a beat: when acts come in bursts (choosing several
+    // options), each chip replaces the last — only the SURVIVOR is worth a
+    // slow local-LLM call. The cleanup cancels superseded drafts unfired.
+    const draftTimer = setTimeout(() => {
+      // Labels can carry long user-typed rejection reasons — keep the request
+      // inside the backend's 600-char bound rather than 422ing the draft.
+      draftReflection({ context: event.label.slice(0, 500) })
+        .then(({ draft }) =>
+          setReflectionPrompt((prev) =>
+            prev && prev.eventId === event.id
+              ? { ...prev, drafted: true, draftValue: draft }
+              : prev
+          )
+        )
+        .catch(() =>
+          setReflectionPrompt((prev) =>
+            prev && prev.eventId === event.id ? { ...prev, drafted: true } : prev
+          )
+        );
+    }, 1200);
+    return () => clearTimeout(draftTimer);
+  }, [lastEventId, draftReflection]);
+  const acceptReflection = (value: string) => {
+    if (!reflectionPrompt || !value.trim()) return;
+    addReflection(
+      reflectionPrompt.eventId,
+      value,
+      value.trim() !== reflectionPrompt.draftValue.trim()
+    );
+    trackUsage('reflection_accepted');
+    setReflectionPrompt(null);
+  };
+  const skipReflection = () => {
+    trackUsage('reflection_skipped');
+    setReflectionPrompt(null);
+  };
+
+  // ── C3: schema replay (a derived PAST state — the store never mutates) ─────
+  const [replayIndex, setReplayIndex] = useState<number | null>(null);
+  useEffect(() => {
+    if (view !== 'schema') setReplayIndex(null);
+  }, [view]);
+  // The replay scrubs WITHIN the current space: events before the last
+  // taxonomy_set reference a tree that no longer exists, so positions before
+  // that boundary would render misleading empties.
+  const replayFloor = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i]!.kind === 'taxonomy_set') return i + 1;
+    }
+    return 0;
+  }, [events]);
+  const replaying = view === 'schema' && replayIndex !== null;
+  const replayColumns = useMemo(() => {
+    if (!replaying || replayIndex === null) return null;
+    const overlay = buildReplayOverlay(events, replayIndex);
+    // Italic ("informed") is TIMED for nodes whose informing event is in the
+    // log; real provenance fills in only for PRE-LOG nodes (no event anywhere
+    // — they were informed before recording started, so italic throughout).
+    const logged = new Set([...Object.keys(overlay.informed), ...Object.keys(overlay.notYet)]);
+    const provenanceLike = {
+      ...Object.fromEntries(Object.entries(provenance).filter(([id]) => !logged.has(id))),
+      ...Object.fromEntries(
+        Object.keys(overlay.informed).map((id) => [
+          id,
+          { source: 'manual' as const, seedProjects: [], createdAt: 0 },
+        ])
+      ),
+    };
+    return buildSchemaColumns(
+      nodes,
+      activeDescriptionByTopic,
+      descriptionById,
+      overlay.optionState,
+      overlay.activeChoices,
+      provenanceLike,
+      new Set(Object.keys(overlay.notYet))
+    );
+  }, [replaying, replayIndex, events, nodes, activeDescriptionByTopic, descriptionById, provenance]);
+  // The selected step's subject cells — outlined so every scrub visibly
+  // answers, even when the step itself changes no schema state (steers,
+  // dismissals, candidate events highlight nothing — the card carries those).
+  const replayHighlight = useMemo(() => {
+    if (!replaying || replayIndex === null || replayIndex <= replayFloor) return undefined;
+    return new Set(events[replayIndex - 1]?.refs ?? []);
+  }, [replaying, replayIndex, replayFloor, events]);
+
   // Corpus ids of the selection's related projects — the panel's examples are
   // also highlighted as places on the design-space map.
   const relatedProjectIds = useMemo(() => {
@@ -337,46 +712,52 @@ export default function MindmapPage() {
   const candidateTextSignatures = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     if (!surface) return;
-    const items: Array<{ node_id: string; text: string }> = [];
-    for (const candidate of Object.values(candidates)) {
-      const text = candidateEmbeddingText(
-        candidate,
-        nodes,
-        activeDescriptionByTopic,
-        descriptionById
-      );
-      const key = candidateCoordKey(candidate.id);
-      if (!text) {
-        candidateTextSignatures.current.delete(candidate.id);
-        continue;
+    // Debounced: the brief textarea changes this text PER KEYSTROKE — one
+    // /locate (an embedding round-trip) after typing pauses, not one per
+    // character hammering the local embed server.
+    const timer = setTimeout(() => {
+      const items: Array<{ node_id: string; text: string }> = [];
+      for (const candidate of Object.values(candidates)) {
+        const text = candidateEmbeddingText(
+          candidate,
+          nodes,
+          activeDescriptionByTopic,
+          descriptionById
+        );
+        const key = candidateCoordKey(candidate.id);
+        if (!text) {
+          candidateTextSignatures.current.delete(candidate.id);
+          continue;
+        }
+        if (candidateTextSignatures.current.get(candidate.id) === text && coords[key]) continue;
+        candidateTextSignatures.current.set(candidate.id, text);
+        items.push({ node_id: key, text });
       }
-      if (candidateTextSignatures.current.get(candidate.id) === text && coords[key]) continue;
-      candidateTextSignatures.current.set(candidate.id, text);
-      items.push({ node_id: key, text });
-    }
-    if (items.length === 0) return;
-    locateNodes(items)
-      .then((located) => {
-        for (const [key, coord] of Object.entries(located)) {
-          const previous = useMindmapStore.getState().coords[key];
-          if (
-            previous &&
-            Math.hypot(previous.x - coord.x, previous.y - coord.y) > 0.02
-          ) {
-            appendCandidateTrail(key.replace(/^cand:/, ''), {
-              x: previous.x,
-              y: previous.y,
-            });
+      if (items.length === 0) return;
+      locateNodes(items)
+        .then((located) => {
+          for (const [key, coord] of Object.entries(located)) {
+            const previous = useMindmapStore.getState().coords[key];
+            if (
+              previous &&
+              Math.hypot(previous.x - coord.x, previous.y - coord.y) > 0.02
+            ) {
+              appendCandidateTrail(key.replace(/^cand:/, ''), {
+                x: previous.x,
+                y: previous.y,
+              });
+            }
           }
-        }
-        mergeCoords(located);
-      })
-      .catch(() => {
-        // Allow a retry on the next composition change.
-        for (const it of items) {
-          candidateTextSignatures.current.delete(it.node_id.replace(/^cand:/, ''));
-        }
-      });
+          mergeCoords(located);
+        })
+        .catch(() => {
+          // Allow a retry on the next composition change.
+          for (const it of items) {
+            candidateTextSignatures.current.delete(it.node_id.replace(/^cand:/, ''));
+          }
+        });
+    }, 900);
+    return () => clearTimeout(timer);
   }, [surface, candidates, nodes, activeDescriptionByTopic, descriptionById, coords, locateNodes, mergeCoords, appendCandidateTrail]);
 
   const candidateMarkers = useMemo<CandidateMarker[]>(() => {
@@ -638,6 +1019,14 @@ export default function MindmapPage() {
           };
         }
         recordProvenance(provenanceEntries);
+        recordEvent(
+          'generated',
+          `Generated ${children.length} option${children.length === 1 ? '' : 's'} at a map gap (${children
+            .map((c) => c.topic)
+            .slice(0, 3)
+            .join(', ')}${children.length > 3 ? '…' : ''})`,
+          children.map((c) => c.id)
+        );
 
         // Generated descriptions (id-keyed; remap-aware) — used for the Context
         // panel, retrieval, and any future re-locate of these nodes.
@@ -698,6 +1087,7 @@ export default function MindmapPage() {
       mergeCoords,
       recordDiscovery,
       recordProvenance,
+      recordEvent,
       mergeDescriptions,
       trackUsage,
     ]
@@ -814,6 +1204,11 @@ export default function MindmapPage() {
         };
       }
       recordProvenance(provenanceEntries);
+      recordEvent(
+        'generated',
+        `Generated ${generatedChildren.length} option${generatedChildren.length === 1 ? '' : 's'} under "${focusNode.topic}"`,
+        generatedChildren.map((c) => c.id)
+      );
 
       // Generated descriptions (id-keyed; remap-aware).
       const descriptionEntries: Record<string, string> = {};
@@ -873,15 +1268,15 @@ export default function MindmapPage() {
             <button
               type="button"
               onClick={() => setView('map')}
-              aria-pressed={view === 'map'}
+              aria-pressed={view === 'map' || view === 'schema' || view === 'crosstab'}
               className={`flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
-                view === 'map'
+                view === 'map' || view === 'schema' || view === 'crosstab'
                   ? 'bg-background text-foreground shadow-sm'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               <Network className="h-3.5 w-3.5" />
-              Mind Map
+              Structure
             </button>
             <button
               type="button"
@@ -902,6 +1297,7 @@ export default function MindmapPage() {
             <button
               type="button"
               onClick={() => {
+                setExamineInitialTab('strips');
                 setView('axes');
                 trackUsage('view_axes');
               }}
@@ -950,8 +1346,10 @@ export default function MindmapPage() {
           pannable canvas — its content clears the panels at xl widths; below
           that, entering Perspectives collapses them, and a closed panel there
           renders as a thin icon button (pointer-events pass through the rest). */}
-      <div className="pointer-events-none absolute top-4 left-4 z-40 w-full max-w-sm">
-        {view === 'axes' && !contextPanelOpen ? (
+      {/* Narrower below xl so the two floating columns cannot collide at
+          ~900-1100px window widths. */}
+      <div className="pointer-events-none absolute top-4 left-4 z-40 w-full max-w-xs xl:max-w-sm">
+        {dockedView && !contextPanelOpen ? (
           <PanelIconButton
             icon={Info}
             label="Context"
@@ -976,19 +1374,49 @@ export default function MindmapPage() {
             </div>
 
             <CollapsibleContent>
-              <ScrollArea className="max-h-[300px]">
+              {/* Native scroll, not Radix ScrollArea: a max-h on its Root
+                  doesn't bound the Viewport, so long content (generated node
+                  descs) was clipped unscrollably at the panel bottom. */}
+              <div className="max-h-[min(45dvh,420px)] overflow-y-auto">
                 <div className="space-y-4 px-4 pb-4">
+                  {/* Breadcrumb: ancestors navigate back to their level. */}
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {selection.lineage.map((topic, idx) => (
-                      <span key={`${topic}-${idx}`} className="flex items-center gap-1.5">
-                        <Badge variant="secondary" className="px-2 py-0 font-medium">
-                          {topic}
-                        </Badge>
-                        {idx < selection.lineage.length - 1 && (
-                          <ChevronRight className="h-3 w-3 text-muted-foreground/40" />
-                        )}
-                      </span>
-                    ))}
+                    {selection.lineage.map((topic, idx) => {
+                      const isCurrent = idx === selection.lineage.length - 1;
+                      const ancestorLineage = selection.lineage.slice(0, idx + 1);
+                      return (
+                        <span key={`${topic}-${idx}`} className="flex items-center gap-1.5">
+                          {isCurrent ? (
+                            <Badge variant="secondary" className="px-2 py-0 font-medium">
+                              {topic}
+                            </Badge>
+                          ) : (
+                            <button
+                              type="button"
+                              title={`Back to ${topic}`}
+                              onClick={() => {
+                                const ancestorId = findNodeByLineage(nodes, ancestorLineage)?.id;
+                                handleSelect({
+                                  topic,
+                                  lineage: ancestorLineage,
+                                  ...(ancestorId ? { nodeId: ancestorId } : {}),
+                                });
+                              }}
+                            >
+                              <Badge
+                                variant="secondary"
+                                className="cursor-pointer px-2 py-0 font-medium transition-colors hover:bg-primary/15 hover:text-primary"
+                              >
+                                {topic}
+                              </Badge>
+                            </button>
+                          )}
+                          {idx < selection.lineage.length - 1 && (
+                            <ChevronRight className="h-3 w-3 text-muted-foreground/40" />
+                          )}
+                        </span>
+                      );
+                    })}
                   </div>
 
                   {corpusNotice ? (
@@ -1122,7 +1550,7 @@ export default function MindmapPage() {
                     {formatExplorationStats(explorationStats)}
                   </p>
                 </div>
-              </ScrollArea>
+              </div>
             </CollapsibleContent>
           </section>
         </Collapsible>
@@ -1131,7 +1559,7 @@ export default function MindmapPage() {
         )}
 
         {/* Candidate composition panel */}
-        {view === 'axes' && !candidatePanelOpen ? (
+        {dockedView && !candidatePanelOpen ? (
           <div className="mt-3">
             <PanelIconButton
               icon={Star}
@@ -1161,39 +1589,145 @@ export default function MindmapPage() {
             }}
             onOpenExamine={() => {
               trackUsage('examine_opened');
+              setExamineInitialTab('strips');
               setView('axes');
             }}
+            onProposeQualities={handleProposeQualities}
           />
         </div>
         )}
       </div>
 
+      {/* Structure mode's views of the same constraint structure: the
+          editable tree, the design-space schema table (Part 12 A1), and the
+          cross-tab lens (Part 12 B2) — all VIEWS of the structure, folded
+          into one mode per review. */}
+      {(view === 'map' || view === 'schema' || view === 'crosstab') && (
+        <div className="pointer-events-none absolute left-1/2 top-4 z-40 -translate-x-1/2">
+          <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border bg-background/90 p-0.5 shadow-md backdrop-blur-md">
+            <button
+              type="button"
+              onClick={() => setView('map')}
+              aria-pressed={view === 'map'}
+              className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                view === 'map' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Network className="h-3 w-3" /> Tree
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setView('schema');
+                trackUsage('view_schema');
+              }}
+              aria-pressed={view === 'schema'}
+              className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                view === 'schema' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Table2 className="h-3 w-3" /> Schema
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setView('crosstab');
+                trackUsage('view_crosstab');
+              }}
+              aria-pressed={view === 'crosstab'}
+              className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                view === 'crosstab' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <LayoutGrid className="h-3 w-3" /> Cross-tab
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Armed pick mode: a global banner (Nielsen H1 / Norman mode error) —
+          the pulsing panel button alone is invisible once the eye is on a
+          canvas. Sits below whatever each view pins to the top center. */}
+      {pendingChoiceAspectId && (
+        <div
+          className={`pointer-events-none absolute left-1/2 z-40 -translate-x-1/2 ${
+            view === 'schema' || view === 'crosstab' ? 'top-28' : 'top-14'
+          }`}
+        >
+          <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-violet-300 bg-violet-500/10 px-3 py-1 text-[11px] font-medium text-violet-700 shadow-sm backdrop-blur">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
+            </span>
+            Picking an option for{' '}
+            <strong className="max-w-[12rem] truncate">
+              {nodes[0]?.children?.find((a) => a.id === pendingChoiceAspectId)?.topic ??
+                'this aspect'}
+            </strong>{' '}
+            — click one in any view
+            <button
+              type="button"
+              onClick={() => setPendingChoiceAspectId(null)}
+              className="rounded-full border border-violet-300 px-2 py-0.5 font-semibold transition-colors hover:bg-violet-500/15"
+              title="Cancel the pick (Esc)"
+            >
+              Cancel · Esc
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Relevance lens: an overlay toggle on the design space (not a mode) */}
       {view === 'space' && (
         <div className="absolute top-4 left-1/2 z-40 flex -translate-x-1/2 flex-col items-center gap-1">
           <div className="flex items-center gap-1 rounded-full border bg-background/90 p-0.5 shadow-md backdrop-blur">
+            {/* The lens is a SWITCH, not a gated button: it can be armed with
+                nothing selected (grayed) and paints the moment an anchor
+                exists — no chicken-and-egg with selection. */}
             <button
               type="button"
+              role="switch"
+              aria-checked={lensOn}
               onClick={() => {
                 if (!lensOn) trackUsage('lens_on');
                 setLensOn(!lensOn);
               }}
-              aria-pressed={lensOn}
-              disabled={!lensOn && !lensAnchor}
-              title={
-                !lensAnchor
-                  ? 'Select a node or candidate to anchor the lens'
-                  : 'Color real projects by relevance to the anchor'
-              }
-              className={`flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
-                lensOn && lensAnchor
-                  ? 'bg-muted text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
+              title="Color real projects by relevance to the selected node or candidate"
+              className="flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-semibold"
             >
-              <Focus className="h-3 w-3" />
-              Relevance lens {lensOn && lensAnchor ? 'on' : 'off'}
+              <Focus
+                className={`h-3 w-3 ${lensActive ? 'text-foreground' : 'text-muted-foreground'}`}
+              />
+              <span className={lensActive ? 'text-foreground' : 'text-muted-foreground'}>
+                Relevance lens
+              </span>
+              <span
+                className={`relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition-colors ${
+                  lensOn ? (lensAnchor ? 'bg-violet-500' : 'bg-violet-300') : 'bg-muted-foreground/25'
+                }`}
+              >
+                <span
+                  className={`inline-block h-2.5 w-2.5 rounded-full bg-white shadow transition-transform ${
+                    lensOn ? 'translate-x-3' : 'translate-x-0.5'
+                  }`}
+                />
+              </span>
             </button>
+            {lensOn && !lensAnchor && (
+              <span className="whitespace-nowrap pr-2 text-[10px] text-muted-foreground">
+                waiting — select a node or candidate
+              </span>
+            )}
+            {/* Only one possible anchor: still NAME it, so "relevance to
+                what?" is always answered at the control itself. */}
+            {lensOn && lensAnchor && !(selectionAnchor && candidateAnchor) && (
+              <span
+                className="max-w-[9rem] truncate whitespace-nowrap pr-2 text-[10px] text-violet-700"
+                title={`The lens is anchored to ${lensAnchor === candidateAnchor ? 'the active candidate' : 'the selected node'}: ${lensAnchor.label}`}
+              >
+                → {lensAnchor === candidateAnchor ? '★' : '◉'} {lensAnchor.label}
+              </span>
+            )}
             {/* Anchor switcher — only when both anchors exist */}
             {lensOn && selectionAnchor && candidateAnchor && (
               <>
@@ -1231,13 +1765,64 @@ export default function MindmapPage() {
 
       {/* Main view layer — all views share nodes + selection */}
       <div className="relative h-full w-full">
-        {view === 'axes' ? (
+        {view === 'schema' ? (
+          <SchemaTable
+            columns={replayColumns ?? schemaColumns}
+            annotation={annotation ?? null}
+            annotating={isAnnotating}
+            annotationError={
+              annotationError instanceof Error ? annotationError.message : null
+            }
+            facets={{ include: facetInclude, exclude: facetExclude }}
+            onToggleFacet={handleToggleFacet}
+            onSelectOption={handleSchemaSelect}
+            selectedOptionId={selectedNode?.id ?? null}
+            onChoose={
+              activeCandidateId && !replaying
+                ? (aspectId, optionId) => setChoice(aspectId, optionId)
+                : undefined
+            }
+            onReject={(optionId) => rejectOption(optionId)}
+            onReopen={(optionId) => reopenOption(optionId)}
+            onAddOption={handleAddOption}
+            onOpenProject={setFocusProjectId}
+            readOnly={replaying}
+            highlightIds={replayHighlight}
+            replay={
+              replaying && replayIndex !== null
+                ? {
+                    step: replayIndex - replayFloor,
+                    total: events.length - replayFloor,
+                    onLive: () => setReplayIndex(null),
+                  }
+                : null
+            }
+          />
+        ) : view === 'crosstab' ? (
+          <CrossTabView
+            columns={schemaColumns}
+            annotation={annotation ?? null}
+            annotating={isAnnotating}
+            annotationError={
+              annotationError instanceof Error ? annotationError.message : null
+            }
+            onOpenProject={setFocusProjectId}
+            onKeepIdea={handleKeepCellIdea}
+            onShowScatter={() => {
+              setExamineInitialTab('scatter');
+              setView('axes');
+              trackUsage('view_axes');
+            }}
+          />
+        ) : view === 'axes' ? (
           <ExamineView
             nodes={nodes}
             selection={selection}
             onSelectNode={handleSelect}
             onSelectProject={setFocusProjectId}
             descriptionByTopic={activeDescriptionByTopic}
+            initialTab={examineInitialTab}
+            onProposeQualities={handleProposeQualities}
           />
         ) : view === 'space' ? (
           surface ? (
@@ -1266,6 +1851,7 @@ export default function MindmapPage() {
               rejected={rejectedIds}
               onCancelGenerate={() => generateAbortRef.current?.abort()}
               relatedProjects={!lensActive ? relatedProjectIds : undefined}
+              facetMatched={facetMatched}
               relevance={lensActive ? relevance ?? null : null}
               lensAnchorId={lensActive ? lensAnchor?.id ?? null : null}
               lensAnchorLabel={lensActive ? lensAnchor?.label ?? null : null}
@@ -1315,10 +1901,10 @@ export default function MindmapPage() {
         descriptionByTopic={activeDescriptionByTopic}
       />
 
-      {/* Floating Related Projects Panel (collapses to an icon in Examine — see
-          the lineage panel note) */}
-      <div className="pointer-events-none absolute top-4 right-4 z-40 flex w-full max-w-md justify-end">
-        {view === 'axes' && !projectsPanelOpen ? (
+      {/* Floating right column: Related Projects (collapses to an icon in
+          Examine — see the lineage panel note) + the B1 inspector dock. */}
+      <div className="pointer-events-none absolute top-4 right-4 z-40 flex max-h-[calc(100%-2rem)] w-full max-w-sm flex-col items-end gap-3 xl:max-w-md">
+        {dockedView && !projectsPanelOpen ? (
           <PanelIconButton
             icon={PanelsRightBottom}
             label="Related projects"
@@ -1355,6 +1941,7 @@ export default function MindmapPage() {
                   projects={data?.projects ?? []}
                   isLoading={isFetching}
                   focusProject={focusProject ?? null}
+                  compact={view === 'space' && Boolean(activeCandidate) && inspectorOpen}
                 />
               </div>
             </CollapsibleContent>
@@ -1362,7 +1949,101 @@ export default function MindmapPage() {
         </Collapsible>
         </div>
         )}
+
+        {/* B1 inspector dock: the Examine strips beside the map while a
+            candidate is active — examine ⇄ map without a mode switch (also
+            anchors the C1/C2 chips' column, rendered after this block). */}
+        {view === 'space' && activeCandidate && (
+          <div className="pointer-events-auto w-full">
+            <Collapsible open={inspectorOpen} onOpenChange={setInspectorOpen}>
+              <section className="overflow-hidden rounded-2xl border bg-background/90 shadow-xl backdrop-blur-md">
+                <div className="flex items-center justify-between px-4 py-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Microscope className="h-4 w-4 text-primary" />
+                    <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                      Inspector
+                    </h2>
+                    <Badge
+                      variant="outline"
+                      className="h-5 max-w-40 truncate px-1.5 text-[10px]"
+                      title={activeCandidate.name}
+                    >
+                      {activeCandidate.name}
+                    </Badge>
+                  </div>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" size="icon" className="group h-6 w-6 rounded-full">
+                      <ChevronRight className="h-4 w-4 transition-transform duration-200 group-data-[state=open]:rotate-90" />
+                    </Button>
+                  </CollapsibleTrigger>
+                </div>
+                <CollapsibleContent>
+                  <div className="max-h-[38vh] space-y-3 overflow-y-auto p-4 pt-0">
+                    <CandidateStrips
+                      nodes={nodes}
+                      descriptionByTopic={activeDescriptionByTopic}
+                      onProposeQualities={handleProposeQualities}
+                    />
+                  </div>
+                </CollapsibleContent>
+              </section>
+            </Collapsible>
+          </div>
+        )}
       </div>
+
+      {/* C1 proposals + C2 reflection — transient chips, bottom-right, never
+          modal: the exploration keeps moving whether or not they're answered.
+          Lifted above the replay bar's slot whenever the schema view shows it. */}
+      <div
+        className={`pointer-events-none absolute right-4 z-40 flex w-80 flex-col items-stretch gap-2 ${
+          // Clear whatever the bottom-center slot holds: the OPEN timeline is
+          // ~3× taller than its closed pill, and on ~1200px windows the two
+          // would otherwise overlap horizontally.
+          view === 'schema' && replayIndex !== null
+            ? 'bottom-72'
+            : view === 'schema' && events.length > replayFloor
+              ? 'bottom-32'
+              : 'bottom-24'
+        }`}
+      >
+        <ProposalChips
+          proposals={proposals}
+          aspects={aspectList}
+          onAccept={handleAcceptProposal}
+          onDismiss={handleDismissProposal}
+        />
+        {reflectionPrompt && (
+          <ReflectionChip
+            key={reflectionPrompt.eventId}
+            prompt={reflectionPrompt}
+            onAccept={acceptReflection}
+            onSkip={skipReflection}
+          />
+        )}
+      </div>
+
+      {/* C3 — the exploration timeline (Fusion-style markers; scrubbing shows
+          the schema as it stood after the clicked step, read-only). Floored
+          at the last taxonomy_set: earlier events belong to a tree that no
+          longer exists and would render misleading empties. */}
+      {view === 'schema' && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-24 z-30 flex justify-center">
+          <ReplayTimeline
+            events={events}
+            floor={replayFloor}
+            index={replayIndex}
+            reflections={reflections}
+            onOpen={() => {
+              setReplayIndex(events.length);
+              trackUsage('replay_opened');
+            }}
+            onScrub={setReplayIndex}
+            onLive={() => setReplayIndex(null)}
+            onReconsider={handleReconsiderProposal}
+          />
+        </div>
+      )}
     </main>
   );
 }

@@ -10,6 +10,9 @@ interface SimpleProjectPanelProps {
   /** A corpus project opened from the design space (or a provenance chip) —
    * shown at the top of the list and auto-selected when it changes. */
   focusProject?: MindmapProjectSchema | null;
+  /** Tighter column cap for when the panel shares its floating column with
+   * another panel (the B1 inspector dock) instead of owning the full height. */
+  compact?: boolean;
 }
 
 type LooseProjectRecord = MindmapProjectSchema & Record<string, unknown>;
@@ -170,6 +173,7 @@ export function SimpleProjectPanel({
   projects,
   isLoading = false,
   focusProject = null,
+  compact = false,
 }: SimpleProjectPanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -196,8 +200,12 @@ export function SimpleProjectPanel({
   // Each column caps its own height and scrolls independently — the height
   // bound must live on the scrollable element itself (a min-h/flex-1 parent
   // grows to content, so the columns would never clip). Kept just under the
-  // viewport so the floating panel stays above the bottom bar.
-  const columnScroll = 'max-h-[calc(100dvh-14rem)] overflow-y-auto';
+  // viewport so the floating panel stays above the bottom bar; in compact
+  // mode the inspector dock (38vh strips + headers/gaps for both panels,
+  // ~16rem) must also fit above the bottom navigator.
+  const columnScroll = compact
+    ? 'max-h-[calc(56dvh-16rem)] overflow-y-auto'
+    : 'max-h-[calc(100dvh-14rem)] overflow-y-auto';
 
   return (
     <div className="flex flex-col overflow-hidden rounded-xl border bg-card">
