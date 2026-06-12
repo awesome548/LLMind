@@ -2,10 +2,14 @@
 
 *Compiled 2026-06-11; updated 2026-06-12 with the placement iterations (§5: support
 recalibration + evidence-anchored placement, ITERATION-PLAN Parts 10–11) and a
-references section (§8). Supersedes-as-overview (does not replace) the working documents
-now archived in [`documentations/`](documentations/). Grounded in the original research
-dissertation ("Automated Generation and Exploration of Design Space with Large Language
-Models", Uchikoga, USYD) from which the mind-map core of this system derives.*
+references section (§8); updated 2026-06-13 with the schema iterations (§5.6:
+Iteration K's living schema, the design-language round, and Iteration L round 1 —
+ITERATION-PLAN Parts 12–13), new feature entries (§2.11–2.16), and status markers on
+the §6 ways forward, two of which are now paid. Supersedes-as-overview (does not
+replace) the working documents now archived in
+[`documentations/`](documentations/). Grounded in the original research dissertation
+("Automated Generation and Exploration of Design Space with Large Language Models",
+Uchikoga, USYD) from which the mind-map core of this system derives.*
 
 ---
 
@@ -37,8 +41,13 @@ a table "because you can see everything at once" and proposed a hybrid).
 The present system keeps that core and adds a second, *empirical* formalization of the
 design space: a frozen 2-D embedding projection of 209 real projects, into which the
 designer's evolving taxonomy, generated ideas, and composed design candidates are all
-placed. Everything since (Iterations A–J) is an elaboration, correction, or
-instrumentation of that bet.
+placed. Iterations A–J elaborated, corrected, and instrumented that bet. Iteration K
+(2026-06-12) then **re-centered the system's deep model**: after re-reading the
+design-space literature against the build, the canonical representation became the
+**living design-space schema** (Halskov & Lundqvist's instrument — aspects × options
+with per-activity dynamics), with every view — map, tree, cross-tab, axes — a *lens* on
+it. The map is the evidence lens, no longer the thesis. Iteration L (2026-06-13) began
+paying the dissertation's remaining findings directly (§5.6).
 
 ---
 
@@ -47,6 +56,11 @@ instrumentation of that bet.
 The features are listed in the order a designer would meet them, and each is tied to the
 mechanism it relies on and the *specific* contribution it makes to design thinking. The
 informing/filtering vocabulary is the dissertation's.
+
+*Reading note (2026-06-13): the order below is chronological-by-encounter, which no
+longer matches the architecture's hierarchy. Since Iteration K the canonical
+representation is the living design-space schema (§2.11); the map (§2.4), axes
+(§2.8), and cross-tab (§2.12) are lenses on it — see the §3 addendum.*
 
 ### 2.1 Taxonomy generation (project brief → structured dimensions)
 **Mechanism:** the designer writes a project overview; the LLM (with self-reflection
@@ -169,12 +183,97 @@ reflection"): the record of *why an idea exists* and *what the exploration cover
 what lets a designer — or a researcher — revisit, justify, and resume. These are also,
 explicitly, the study instruments for evaluating everything above.
 
-### 2.11 Researcher backstage (not designer-facing, by design)
-Drift/clip/support logging per generation; `project-log-stats`, `project-calibrate`,
-`project-align`, `project-diagnose` CLIs; register-gap correction; 100+ automated tests.
+### 2.11 The design-space schema with annotation receipts (Iteration K, A1–A3)
+**Mechanism:** aspects × options as a pan-zoomable table — the literature's canonical
+representation and the dissertation participant's literal request ("a table where you
+can see everything at once"). A local-LLM **annotation job** judges, per option, which
+corpus projects genuinely exemplify it (embedding shortlist → chunked membership
+judgments) → per-option **counts with receipts** (click a badge, read the projects),
+Halskov-granularity diagnostics (too-broad / unprecedented), and ± **facets** that fade
+non-matching projects on the map. Cell styling carries the living-schema dynamics:
+ring = chosen, struck = rejected, italic = informed.
+**Contribution:** *the overview debt paid, with evidence attached.* Counts are evidence
+with receipts, never verdicts — the corpus⇄taxonomy bridge Halskov annotated by hand,
+automated. This is what §6 item 5 asked for ("support → receipts") at the categorical
+level: the designer reads "LED wall panels — 9 projects" and can name all nine.
+
+### 2.12 The cross-tab lens and generate-into-gap (Iteration K, B2)
+**Mechanism:** pick two aspects → an option×option grid from the annotation; each cell
+lists the real projects committing to BOTH options; an empty cell is an **exact,
+nameable gap** ("no precedent combines transit-hub siting with live performer input"),
+offered as a one-click generation seeded with half-matching precedents; a kept concept
+becomes a candidate skeleton (the two choices + the concept as brief).
+**Contribution:** *the morphological promise, sharpened.* The map renders gaps as
+diffuse empty regions; the cross-tab renders them as named, checkable combinations —
+Zwicky's combinatorics with receipts. Where 2.5 aims generation at a place, this aims
+it at a *configuration*.
+
+### 2.13 The inspector dock and steering (Iteration K, B1 + B3)
+**Mechanism:** while a candidate is active, its examination strips (concept↔commitments
+agreement, per-choice consistency, rubric metrics over the corpus distribution) dock
+into the map view. Every strip track is a **steering rail**: click or drag to aim a
+target score (Steer/Cancel live in the same card), and the LLM makes ONE deliberate
+revision of the brief *in language*, preserving committed choices; embeddings then
+**measure** the move (requested vs achieved, along vs orthogonal) and the result is
+always a veto card.
+**Contribution:** *convergence with honest instruments.* The §4.2 critique ("Perspectives
+is a researcher's instrument wearing a designer's UI") is *substantially* answered by
+integration — the strips now live in the designer's loop (the standalone Perspectives
+mode remains; see §4.2's status note) — and the system's one write-access to the
+designer's text is single-move, measured, and vetoable — deltas as rulers and briefs,
+never constructors.
+
+### 2.14 The loops: proposals, reflections, the timeline (Iteration K, C1–C3)
+**Mechanism:** (C1) any instrument may emit *proposals* — applied steers offer their
+named qualities as options; kept cell concepts offer themselves under both parent
+aspects — as accept/dismiss chips; accepted ones enter the taxonomy with provenance.
+(C2) after each commitment a chip offers an AI-drafted ONE-LINE rationale — Enter
+accepts, typing edits (tracked), Esc skips. (C3) an append-only event log renders as a
+Fusion-360-style **timeline**: icon markers per step, scrub to see the schema as it
+stood (read-only, ghosted not-yet options, the step's subjects outlined), reflections
+on markers, and **Reconsider** for dismissed suggestions.
+**Contribution:** *the informing↔filtering cycle, closed and recorded — as
+commitments* (what was looked at but not acted on stays invisible, a deliberate
+trade examined in §5.6 weakness 3). C1 is the TOCHI loop made mechanical
+(investigation generates vocabulary); C2 inverts the documentation burden that
+killed process-reflection tools (Dalsgaard & Halskov, 2012); C3 is the
+dissertation's named future work ("temporal layers… record and compare") — record
+and replay built, compare deliberately deferred (ITERATION-PLAN K9).
+
+### 2.15 The rationale layer and coverage probe (Iteration L, L-A)
+**Mechanism:** one line per aspect — "why this dimension?" — generated from the
+annotation counts (cached per aspect+evidence), shown under schema headers and in the
+Context panel, labelled *AI, from corpus evidence*. The **coverage probe** computes
+which corpus projects the taxonomy barely describes (pure set arithmetic) and asks, on
+demand, what dimension they exemplify that the taxonomy misses; answers arrive as
+"Add as a new dimension?" chips whose acceptance grows the schema (first live probe:
+"Spatial-Perceptual Integration", from the 5 worst-covered projects).
+**Contribution:** *the rationale debt paid, structurally.* "Why these seven though, is
+there a reason? Is there no more?" was the study's central trust finding; the rationale
+*addresses* the first half where the question arises, and the probe addresses the
+second half with evidence-backed candidates — informing at the *structure* level,
+through the same veto-able proposals channel as everything else. Two open questions
+travel with the feature (examined as §5.6 weaknesses 1–2): whether labelled post-hoc
+rationale buys *calibrated* trust rather than just more of it, and whether
+dimension-level proposals anchor harder than option-level ones.
+
+### 2.16 Entry choice and the editable project brief (Iteration L, L-B)
+**Mechanism:** a once-only first-run dialog — **Start from your brief** (write what you
+imagine; the taxonomy dialog's overview field is the brief) vs **Discover first** (the
+prebuilt space). The brief persists; after the first generation the navigator button
+becomes **Edit Brief & Taxonomy**, reopening the dialog prefilled.
+**Contribution:** *the layered inform→filter model the participant asked for* ("a tool
+where you can write down what you're imagining… and then it gives you ideas depending
+on that") — without forcing it on designers who'd rather see the territory first.
+
+### 2.17 Researcher backstage (not designer-facing, by design)
+Drift/clip/support logging per generation; generation/steer/annotation logs;
+`project-log-stats`, `project-calibrate`, `project-align`, `project-diagnose` CLIs;
+register-gap correction; 200 automated tests across both stacks (134 backend / 66
+frontend), plus meaning-level manual walkthroughs (TESTING §6–15).
 **Contribution:** the validity case. None of the designer-facing claims above (gaps are
-meaningful, placements are usable, generation fills gaps) is left as an assertion — each
-has a number, a log, and a reproducible check behind it.
+meaningful, placements are usable, generation fills gaps, annotation counts are real)
+is left as an assertion — each has a number, a log, and a reproducible check behind it.
 
 ---
 
@@ -243,6 +342,20 @@ producing the artifact it explained. That is a real and defensible improvement, 
 remaining explanations are still a UX burden the next iteration must reckon with
 (see §4).
 
+**Addendum (2026-06-13): the argument was right, and it lost the center anyway.**
+Iteration K re-read the representation traditions against the build and re-centered the
+system on the one the dissertation had judged "pragmatic but static": the **Design
+Space Schema**, made *living* — populated by automated corpus annotation (per-option
+counts with receipts), styled with per-activity dynamics, replayable in time, and
+since Iteration L able to explain its own dimensions. The embedding map keeps every
+property argued above, but as the *evidence lens* on the schema rather than the
+system's deep model. This also closes the §3 conceptual limit ("a similarity landscape
+of texts is not a morphological space of configurations") by a categorical route the
+geometric bridges could only approximate: the schema, its cross-tabs, and its
+annotation ARE the configuration space, with the map supplying the precedent
+neighborhoods underneath. The point-cloud verdict stands; it just stopped being the
+thesis.
+
 ---
 
 ## 4. Critical reflection: what tightly serves the core purpose — and what doesn't
@@ -260,6 +373,14 @@ perspectives; resist fixation; keep the designer in the informing↔filtering lo
   structurally cannot, and the preview keeps the designer in command of the evidence.
 - **Candidates** — closes the configuration gap; gives divergence a destination
   (convergence with provenance).
+- **The living schema + annotation receipts** *(built 2026-06-12, directly off the
+  dissertation findings — §2.11, §5.6)* — answers the one overview demand a real user
+  voiced, and grounds every count in nameable evidence; the strongest claim to
+  "tightly connected" any feature has, since the connection runs through P1's own
+  words. Note the recency: a long-standing gap closed days ago, not a mature feature.
+- **The loops (proposals / reflections / timeline)** *(built 2026-06-12 — §2.14,
+  §5.6)* — the informing↔filtering cycle the whole framework is named for, made
+  mechanical and recorded; also the study's richest instrument.
 
 ### 4.2 Loosely connected, with reasons
 
@@ -271,6 +392,11 @@ perspectives; resist fixation; keep the designer in the informing↔filtering lo
   **Either integrate it into the loop (generate-in-axes, candidate reading as a
   consistency check, axes suggested from the designer's current focus) or demote it to
   a diagnostic.** Its current state is the clearest case of W1 (feature accretion).
+  *(Status 2026-06-13: substantially answered by integration — the strips became the
+  Inspector dock inside the map view, every strip track became a steering rail
+  (§2.13), and the cross-tab's "show as continuous scatter" now leads into the axes
+  tab. The standalone Perspectives mode remains, and the K5 lens-bar end state — which
+  would dissolve it — is still an open decision.)*
 
 - **The relevance lens.** Honest and cheap, but its designer task overlaps the related-
   projects highlight it generalizes, and the per-query "relative" normalization makes
@@ -286,6 +412,12 @@ perspectives; resist fixation; keep the designer in the informing↔filtering lo
   argument rather than the design flow. **Collapse to one designer-facing trust cue**
   (e.g. a single "how seriously to take this dot" encoding with a tooltip), with the
   full decomposition in a diagnostics drawer.
+  *(Status 2026-06-13: the language half is done — a six-lens heuristic review drove a
+  plain-words pass ("map reliability: how faithful the 2D layout is", corpus support
+  explained in terms of precedents, cell grammar decoded at the header) and a locked
+  design language: hierarchy by luminance, one hue per meaning, never dark-border
+  emphasis (FRONTEND.md §Design language). The single-cue collapse itself remains
+  open.)*
 
 - **The lattice itself deserves the question.** The 48×48 grid was a presentation
   convenience (clickable empty cells) that has since generated its own feature debt:
@@ -293,6 +425,9 @@ perspectives; resist fixation; keep the designer in the informing↔filtering lo
   think in ideas and regions, not cells. The gap *preview* — not the grid — turned out
   to be what makes empty space explorable. A continuous surface with freeform
   "generate around here" targeting could delete an entire family of micro-features.
+  *(Status 2026-06-13: still undecided, but the question has lost urgency — the
+  cross-tab now provides the sharper gap object (a named option pair) for the cases
+  that matter most, so the lattice carries less of the morphological load.)*
 
 - **Session/usage/stats instrumentation** is scaffolding for the study, not designer
   value — correctly built, but it should be counted as method, not feature, when
@@ -305,24 +440,36 @@ How much did the approaches actually help the objective? Split the claims:
 - **Technical claims — measured, mostly held.** Coordinate stability, bracket seeding,
   drift, clipping, the register gap: all instrumented, several already corrected on
   evidence (47% clip → diagnosed as register gap → prompt + alignment + soft margin).
-  This part of the project practices what it preaches.
-- **Design claims — still hypotheses.** *No designer has used any post-dissertation
-  feature.* The entire feature→value chain in §2.4–2.11 is plausible, internally
-  coherent, instrumented — and unvalidated. The only empirical design evidence the
-  project owns (P1) validates the *old* core and two needs the new work has only
-  partially served: **overview** (the spatial view is an answer, but the participant's
-  literal request — a table/hybrid — was never built) and **rationale** ("why these
-  seven?" remains unanswered in the taxonomy flow to this day, while transparency was
-  engineered into the *spatial generation* flow instead).
-- The risk this pattern names: the project has been optimizing the parts that are
-  *measurable without users* (geometry, drift, register) over the parts the one real
-  user actually asked for. Iteration H looked like the right way to finish that thread.
-  §5 records why it wasn't finished — and why the continuation was, this time, a
-  different kind of work.
+  The annotation layer joined this class with its own gate (a full-table spot-check
+  against ground-truth expectations before any count was trusted — §5.6). This part of
+  the project practices what it preaches.
+- **Design claims — still hypotheses, but the asks are now built.** *No external
+  designer has used any post-dissertation feature* (the owner's defect-finding use —
+  §5.5, §5.6 — is real evidence about correctness, not about design value). The
+  feature→value chain in §2.4–2.17 is plausible, internally coherent, instrumented —
+  and unvalidated. What HAS changed since this section was first written: the two
+  needs P1 actually voiced are no longer unserved. **Overview** is the schema table
+  (§2.11 — the participant's literal request, built as the canonical view), and
+  **rationale** is the rationale layer + coverage probe (§2.15 — "why these seven?"
+  answered where the question arises, "is there no more?" answered with evidence).
+  Both went from "three years old and unimplemented" to shipped within two days of
+  re-reading the dissertation; what remains unproven is whether they produce the
+  trust the study found missing — which is precisely what the drafted testing plan's
+  trust-delta probe measures.
+- The risk this pattern named — optimizing what is *measurable without users* over
+  what the one real user asked for — was partially answered by Iterations K–L (pulled
+  directly by the dissertation's findings, §5.6), but its sharpest form now points at
+  one target: every day of further building without running the study adds to a
+  hypothesis pile that only participants can convert into knowledge. The study is the
+  bottleneck, and it is now also the only remaining item with zero progress (§6
+  item 2).
 
 ---
 
-## 5. The placement iterations (2026-06-12): what was done, and what it teaches
+## 5. The iterations of 2026-06-12/13: placement, then the living schema
+
+§5.1–5.5 cover the placement round; §5.6 covers what followed the same week —
+Iteration K (the schema re-centering) and Iteration L round 1.
 
 Two observations — both made by the project's owner *while actually using the tool* —
 drove one more round of geometry work. The full record (diagnostics, alternatives,
@@ -466,12 +613,120 @@ Two things this small bug teaches, beyond its fix:
   receipts work (§6 item 5).
 
 All three defects in this section were found by one person *using* the prototype for
-minutes at a time — none by the 126-test harness. That is the strongest argument item
-2 of §6 has.
+minutes at a time — none by the then-126-test harness (200 tests as of 2026-06-13,
+§2.17; the point stands at any count). That is the strongest argument item 2 of §6
+has.
+
+### 5.6 From geometry to schema: Iteration K and Iteration L round 1 (2026-06-12 → 13)
+
+The day after the placement iterations, the project did what §4.3 said it should have
+done years earlier: it went back to the sources. Six works — Halskov & Lundqvist's
+design-space thinking, Halskov's hand-annotated MAB design space, Luminate, the
+creativity-constraints literature, the process-reflection work, and the dissertation
+itself — were re-read against the build, and the verdict (ITERATION-PLAN Part 12, K0)
+overturned the system's center of gravity. The full record is Parts 12–13; this is the
+report-level account.
+
+**What was built (Iteration K, phases A–C, all live-verified):**
+
+1. **The schema spine (A).** The design-space schema as the canonical view (§2.11),
+   populated by automated corpus annotation: per option, an embedding shortlist judged
+   by the local LLM for genuine exemplification — counts with receipts, granularity
+   diagnostics, faceted filtering. The gate was a meaning-level spot-check (the §5.4
+   lesson, applied): "LED wall panels" had to list the corpus's known LED facades
+   before any count was trusted. It passed on the fourth prompt architecture (below),
+   with counts spreading 18→0 across options and a mean shortlist acceptance of 0.231 —
+   the judgment layer demonstrably filtering, not rubber-stamping, embedding aboutness.
+2. **Lenses and instruments (B).** The inspector dock and steering rails (§2.13); the
+   cross-tab lens with generate-into-gap (§2.12). The system's first write access to
+   designer text shipped with the evidence rule intact: language moves, embeddings
+   measure, every result is a veto card showing requested-vs-achieved.
+3. **The loops (C).** Proposals, burden-inverted reflections, the event log and the
+   Fusion-style replay timeline (§2.14). Three decision records were written rather
+   than features built (K9): restart-from-moment judged worth building (scoped to
+   commitments, append-only), git-like branching rejected (candidates ARE the
+   branching mechanism; session files are the poor man's fork), the universal
+   timeline staged for later.
+
+**The local-stack lesson (a §5.4-class finding).** Annotation v1–v3 shipped green
+harnesses and nonsense judgments: the serving model proved to be *thinking-only*
+(every suppression flag verified ignored live), so capped responses burned their
+budget mid-deliberation and answered nothing — and a flat `chars//3` token estimate
+overflowed the 4k window on a Chinese-heavy chunk. The fix was a recipe, not a flag:
+budget the thinking (small chunks, window-aware `max_tokens`, charset-aware
+estimates, reasoning-tail salvage), now codified for every LLM feature since
+(PROCESS.md §2). The pattern rhymes with §5.4 item 5 exactly: the tests verified the
+math; only a meaning-level gate caught the model answering nothing at all.
+
+**The design-language round (2026-06-13).** A user complaint about dark-border
+highlights triggered a standing rule — hierarchy by luminance and saturation, never
+ink — plus a six-lens heuristic evaluation (Nielsen, Norman, Gestalt, direct
+manipulation) whose confirmed findings were triaged and the chosen ones fixed: replay
+announces itself where clicks get ignored, pick mode became globally visible and
+Esc-cancelable, jargon got plain words, candidate deletion got a guard, bottom zones
+stopped colliding. Accessibility items were knowingly skipped (desktop research
+prototype, user's call).
+
+**Iteration L round 1 (2026-06-13).** The final dissertation was read end-to-end
+against the prototype, yielding a paid/half-paid/open audit and a decision menu
+(Part 13). The user chose L-A and a modified L-B; both shipped same-day: the
+rationale layer and coverage probe (§2.15), and the entry choice with an editable,
+persisted project brief (§2.16). The first live coverage probe proposed
+"Spatial-Perceptual Integration" from the five worst-covered projects — a plausible
+blind spot (embodiment/materiality) in a taxonomy of six technology-and-content
+dimensions — and it now stands in the schema as the seventh aspect. The study's
+paperwork was drafted the same day: USER-FLOWS.md (ten flows, each naming its free
+instrumentation) and USER-TESTING-PLAN.md (a value-proposition-centred plan with a
+trust-delta probe aimed squarely at the rationale layer's reason for existing).
+
+**Strengths, read critically:**
+- **Pulled by the only user evidence the project owns.** Every K/L feature traces to
+  a named finding: the table request, the rationale complaint, the burden problem,
+  the named future work. This is the §4.3 risk pattern answered in kind — two days of
+  work retired two three-year-old debts.
+- **The honesty discipline transferred to the new instruments.** Counts are receipts,
+  rationales are labelled AI-from-evidence, steering is always vetoable, the replay
+  ghosts what did not yet exist. The new layer did not relax the old standard.
+- **Decisions got recorded as decisions.** K9 and Part 13 write down what was NOT
+  built and why — branching rejected on grounds (merge is meaningless for design
+  states), rollback deferred with a design sketched. The report's past pattern of
+  silent scope drift has a paper trail now.
+
+**Weaknesses, owned:**
+1. **The rationale layer is post-hoc explanation, not introspection.** The model that
+   generated the taxonomy now also explains it, from evidence, after the fact. The
+   label says so, and the counts constrain it — but a fluent self-justification that
+   *reads* grounded is exactly what a trusting participant cannot distinguish from a
+   true one. Whether labelled post-hoc rationale produces calibrated trust (rather
+   than more trust) is an open empirical question, and the testing plan's trust-delta
+   probe measures gain, not calibration. A harder probe (a planted weak dimension —
+   does the rationale make participants accept it?) would test the failure mode.
+2. **The probe moves the fixation risk up a level.** Wadinambiarachchi's warning was
+   about fixating on AI-generated *options*; the coverage probe now proposes
+   *dimensions*. Accepting "Spatial-Perceptual Integration" reshapes everything
+   downstream of it. The mitigation is the same as everywhere (proposals are chips,
+   dismissals reconsiderable), but structure-level anchoring is plausibly stronger
+   than option-level, and nothing measures it yet.
+3. **The timeline records commitments, not attention.** What the designer looked at,
+   hovered, compared and silently rejected is invisible — the record over-represents
+   decisiveness. This was a deliberate K9 trade (attention ≠ commitment), but it
+   bounds what the "reflective record" claim can mean in the study.
+4. **Cold-cache latency is now a session-design constraint.** A fresh taxonomy costs
+   minutes of annotation plus minutes of rationale drafting on the local stack. The
+   caches amortize it and the testing plan says to pre-warm — but "pre-warm the
+   instrument before the participant arrives" is a real limitation of the
+   local-first bet, and brief-first first-runs will feel it.
+5. **The external-evidence count is still zero.** Two more iterations of plausible,
+   instrumented, internally-validated design claims have been added to the pile the
+   study must clear. The paperwork existing makes this less excusable, not more.
 
 ---
 
 ## 6. Ways forward (next iteration — approach-level, not tech-level)
+
+*Status markers added 2026-06-13; the items keep their numbers because other
+documents cite them (e.g. "REPORT §6.2"). Two are paid, two part-paid, one is now
+the unambiguous next move.*
 
 1. **Give the tool a spine, then test it.** Define the canonical journey (brief →
    dimensions → map → gap → generate → judge against precedent → compose → export
@@ -479,6 +734,13 @@ minutes at a time — none by the 126-test harness. That is the strongest argume
    lens, and Perspectives appear when the journey reaches them. Every feature that
    cannot find a place on the spine is a candidate for the diagnostics drawer or
    deletion.
+   **[PART-PAID — disclosure mechanics, not yet pedagogy.]** The journey now has a
+   documented shape (USER-FLOWS.md F0–F9) and a chosen front door (the first-run
+   brief-first/discover-first choice, §2.16); the dock, cross-tab and timeline
+   disclose progressively. Whether the disclosure actually *teaches* the journey is
+   a study question (the testing plan deliberately leaves F4–F8 untutored to measure
+   discoverability). Not done: the K5 lens-bar end state, and the deletion audit
+   this item really asks for.
 
 2. **Run the deferred study — it is now the bottleneck for every claim.** 3–5
    participants (include non-novices this time; the dissertation flags the
@@ -491,6 +753,13 @@ minutes at a time — none by the 126-test harness. That is the strongest argume
    washed-out fill (the false-familiarity check), and do they read a dot amid its
    precedents as "related to these" (the intended semantics) or as "exactly here"
    (over-reading)?
+   **[OPEN — NOW THE ONLY ZERO-PROGRESS ITEM, AND THE NEXT MOVE.]** The paperwork
+   exists since 2026-06-13: USER-TESTING-PLAN.md reframes the protocol around the
+   value proposition (four components, five tasks, CSI), folds in the two placement
+   probes above, and adds a **trust-delta probe** for the rationale layer (§5.6
+   weakness 1 names the calibration question it still leaves open). Remaining: a
+   pilot, recruitment, and the thin study-mode instrumentation (participant tagging,
+   one-click bundle).
 
 3. **Pay the two debts owed to the only real user.** (a) A taxonomy *overview* — the
    hybrid table the participant asked for: all aspects × options with descriptions in
@@ -500,6 +769,11 @@ minutes at a time — none by the 126-test harness. That is the strongest argume
    which precedents" per aspect, shown on demand. Both findings are three years of
    iterations old and still unimplemented; both are more evidenced than anything in
    Iterations E–H.
+   **[PAID — both.]** (a) became the design-space schema, built beyond the ask
+   (annotation receipts, facets, in-table composition — §2.11, Iteration K-A).
+   (b) became the rationale layer + coverage probe (§2.15, Iteration L-A), grounded
+   in annotation counts rather than generation-time claims. Whether they buy the
+   trust they were built for is item 2's question.
 
 4. **Consolidate the epistemics into design language.** Part 11 started this from the
    geometry side (the band is gone; one signal fewer). The remaining work is the UI
@@ -508,6 +782,10 @@ minutes at a time — none by the 126-test harness. That is the strongest argume
    vague"); the full decomposition behind a "how this map works" panel. The honesty
    layer should make designers *braver in the right places*, not more hesitant
    everywhere.
+   **[PART-PAID]** The plain-words pass shipped (map reliability, support-as-
+   precedents, cell grammar), and a design language is now locked and codified
+   (luminance hierarchy, one hue one meaning — FRONTEND.md). The single on-canvas
+   trust cue and the diagnostics drawer remain unbuilt.
 
 5. **Turn support from a score into receipts — and unify the retrieval behind it.**
    The five anchor projects behind a node's support are now also the anchors behind
@@ -523,9 +801,20 @@ minutes at a time — none by the 126-test harness. That is the strongest argume
    the placement anchors. The percentile stays in the diagnostics layer where it
    earns its keep. This is the report's answer to "is support a designer value or a
    research instrument?" — it is an instrument until its receipts are surfaced.
+   **[PART-PAID, by a different and arguably better route.]** Annotation receipts
+   (§2.11) deliver evidence-with-names at the *categorical* level — counts that
+   click through to projects, per-option, which is sharper than support bands
+   because membership is judged, not inferred from cosine. The coverage probe even
+   delivers the "uncharted as invitation" framing (poorly-covered projects → a
+   missing dimension). Still open: the embedding-side retrieval unification (the
+   §5.5 inconsistency stands, with reduced urgency noted in ITERATION-PLAN K8) and
+   per-aspect support aggregates.
 
 6. **Decide the lattice question deliberately** (affordance or artifact?) before any
    further feature is built on cells.
+   **[OPEN, demoted.]** Nothing new was built on cells; the cross-tab now carries
+   the sharpest gap semantics. The decision still deserves a deliberate moment
+   before any future cell-coupled feature.
 
 7. **Then, and only then, the corpus.** The recalibrated support makes the ceiling
    quantitative *and category-specific*: technology options read 40–66% while
@@ -534,6 +823,9 @@ minutes at a time — none by the 126-test harness. That is the strongest argume
    domain as a generality probe) is the named next thread after the study — which
    will also show *where* corpus poverty actually hurt designers, steering what gets
    collected.
+   **[OPEN, unchanged — and better mapped.]** The annotation now names corpus
+   thinness per option (five "unprecedented" options identified in the gate run), so
+   when expansion happens it can be targeted rather than indiscriminate.
 
 ---
 
@@ -545,15 +837,18 @@ All prior working documents are archived, unmodified in content, in
 | Document | What it holds |
 |---|---|
 | [`DESIGN-SPACE-VIZ.md`](documentations/DESIGN-SPACE-VIZ.md) | Original design-space concept, invariants, the three hard problems, M0–M3 build record |
-| [`DESIGN-SPACE-ITERATION-PLAN.md`](documentations/DESIGN-SPACE-ITERATION-PLAN.md) | The full critique→iteration history: Parts 1–11 (weaknesses, Iterations A–J, measurements) |
+| [`DESIGN-SPACE-ITERATION-PLAN.md`](documentations/DESIGN-SPACE-ITERATION-PLAN.md) | The full critique→iteration history: Parts 1–13 (weaknesses, Iterations A–L, measurements, decision records K9 + Part 13's dissertation audit and menu) |
 | [`DESIGN-SPACE-PERSPECTIVES-PLAN.md`](documentations/DESIGN-SPACE-PERSPECTIVES-PLAN.md) | F1 lens + F2 axes design rationale and risks |
-| [`DESIGN-SPACE-TESTING.md`](documentations/DESIGN-SPACE-TESTING.md) | Test protocol: automated harness + manual UI checks (§6 = Iteration H, §7 = Iteration I, §8 = Iteration J) |
+| [`DESIGN-SPACE-TESTING.md`](documentations/DESIGN-SPACE-TESTING.md) | Test protocol: automated harness + manual meaning-level walkthroughs (§6–8 = Iterations H–J, §9–13 = Iteration K, §14 = the heuristic round, §15 = Iteration L round 1) |
+| [`USER-FLOWS.md`](documentations/USER-FLOWS.md) | The ten user journeys (F0–F9), each tied to a value-proposition component and its free event-log instrumentation — doubles as study task templates |
+| [`USER-TESTING-PLAN.md`](documentations/USER-TESTING-PLAN.md) | The drafted study: value proposition (4 components), concepts-as-bets, five tasks, trust-delta probe, CSI, synthesis→investment mapping |
 | [`PROJECT_DEV.md`](documentations/PROJECT_DEV.md) | Early development log with per-change justifications |
 | [`LEARN.md`](documentations/LEARN.md) | Layer-by-layer learning guide to the whole codebase (designer-friendly) |
 
 Live reference docs stay with their subsystems: [`CLAUDE.md`](CLAUDE.md) (hub),
+[`PROCESS.md`](PROCESS.md) (session handoff + the hard-won local-stack rules),
 [`llmind-python/BACKEND.md`](llmind-python/BACKEND.md),
-[`llmind-web/FRONTEND.md`](llmind-web/FRONTEND.md),
+[`llmind-web/FRONTEND.md`](llmind-web/FRONTEND.md) (incl. the locked design language),
 [`llmind-web/ZUSTAND.md`](llmind-web/ZUSTAND.md),
 [`llmind-web/REACT-QUERY.md`](llmind-web/REACT-QUERY.md).
 
@@ -599,9 +894,23 @@ Statistics, Series A, 26*(4), 359–372. https://www.jstor.org/stable/25049340
 
 **Foundations cited elsewhere in this report:**
 
+Cherry, E., & Latulipe, C. (2014). Quantifying the creativity support of digital
+tools through the creativity support index. *ACM Transactions on Computer-Human
+Interaction, 21*(4), 1–25.
+
+Dalsgaard, P., & Halskov, K. (2012). Reflective design documentation. In
+*Proceedings of the Designing Interactive Systems Conference (DIS '12)*. ACM.
+
 Dove, G., Hansen, N. B., & Halskov, K. (2016). An argument for design space
 reflection. In *Proceedings of the 9th Nordic Conference on Human-Computer
 Interaction (NordiCHI '16)* (Article 20). ACM. https://doi.org/10.1145/2971485.2971528
+
+Halskov, K. (2021). A media architecture design space: The MAB 2012–2018 nominees.
+In *Proceedings of the 5th Media Architecture Biennale Conference (MAB '20)*. ACM.
+
+Halskov, K., & Lundqvist, C. (2021). Filtering and informing the design space:
+Towards design-space thinking. *ACM Transactions on Computer-Human Interaction,
+28*(1), 8:1–8:28. https://doi.org/10.1145/3434462
 
 Heape, C. (2007). *The design space: The design process as the construction,
 exploration and expansion of a conceptual space* [Doctoral dissertation, University
@@ -612,5 +921,22 @@ barriers. In A. H. Dutoit, R. McCall, I. Mistrík, & B. Paech (Eds.), *Rationale
 management in software engineering* (pp. 73–90). Springer.
 https://doi.org/10.1007/978-3-540-30998-7_3
 
+Onarheim, B., & Biskjær, M. M. (2013). An introduction to 'creativity constraints'.
+In *Proceedings of the 24th ISPIM Innovation Conference*.
+
+Suh, S., Chen, M., Min, B., Li, T. J.-J., & Xia, H. (2024). Luminate: Structured
+generation and exploration of design space with large language models for human-AI
+co-creation. In *Proceedings of the 2024 CHI Conference on Human Factors in
+Computing Systems*. ACM. https://doi.org/10.1145/3613904.3642400
+
 Uchikoga. (n.d.). *Automated generation and exploration of design space with large
 language models* [Unpublished dissertation]. The University of Sydney.
+
+Wadinambiarachchi, S., Kelly, R. M., Pareek, S., Zhou, Q., & Velloso, E. (2024). The
+effects of generative AI on design fixation and divergent thinking. In *Proceedings
+of the 2024 CHI Conference on Human Factors in Computing Systems*. ACM.
+https://doi.org/10.1145/3613904.3642919
+
+Zwicky, F. (1967). The morphological approach to discovery, invention, research and
+construction. In F. Zwicky & A. G. Wilson (Eds.), *New methods of thought and
+procedure* (pp. 273–297). Springer. https://doi.org/10.1007/978-3-642-87617-2_14
