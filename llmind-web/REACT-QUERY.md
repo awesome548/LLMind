@@ -4,8 +4,10 @@ TanStack Query v5. Mindmap hooks live in `src/features/mindmap/hooks/`,
 design-space hooks in `src/features/design-space/hooks/`.
 
 Long-running LLM endpoints (generate-nodes, generate-at) return `202 {job_id}`
-and are polled via `src/lib/run-job.ts` (1.5 s interval, 5 min timeout,
-`AbortSignal` support) — the mutation resolves with the job result.
+and are polled via `src/lib/run-job.ts` (1.5 s interval, **5 min default timeout**,
+`AbortSignal` support) — the mutation resolves with the job result. Two hooks
+override the timeout for cold-cache local-LLM jobs: **annotation 20 min**
+(`use-annotation-query.ts`), **rationale 10 min** (`use-rationale-query.ts`).
 
 ## Queries
 

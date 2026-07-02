@@ -4,6 +4,16 @@
 **Scope:** Text-only embeddings. Multimodal deferred (separate future axis).
 **Dimensions:** 2D (the pipeline supports `--dims 3`; renderer is 2D).
 
+> ⚠️ **Archival staleness note (2026-07-03 code-verification sweep — body below
+> unmodified):** (1) any reference to fitting on `bge-small-en-v1.5` / 384-d
+> describes an early configuration — the live index and projection are **768-d**
+> (`nomic-embed-text-v1.5`; `surface.json` `input_dims: 768`). (2) Runtime
+> placement is no longer UMAP's `.transform()`: since Part 11 (2026-06-12) it is
+> the **evidence-anchored top-5 neighbour interpolation** (`place_by_neighbors`),
+> with the transform kept only as the no-corpus fallback — see PROJECT-REPORT §5
+> and ITERATION-PLAN Part 11. (3) The map is now a *lens* on the living schema,
+> not the system's canonical representation (Iteration K).
+
 ---
 
 ## Implementation status

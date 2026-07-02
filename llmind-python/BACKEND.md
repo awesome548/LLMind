@@ -19,11 +19,18 @@ uv run python -c "from config import settings; print(settings)"  # verify env
 ### `POST /api/taxonomy/generate`
 Generate a full design taxonomy from a project overview.
 
+> **Mechanism note (verified 2026-07-03):** the endpoint makes **one** structured LLM
+> call, seeded with a fixed farthest-selected exemplar set from `ids_file` — the
+> Self-Refine reflection loop is present but **commented out**
+> (`generate_taxonomy.py:225–242`), so `num_reflections` currently only alters the
+> prompt wording. Re-enable the loop or drop the parameter deliberately
+> (PROJECT-REPORT §5.7, correction 1).
+
 **Request**
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `project_overview` | `string` | required | 1–10 000 chars |
-| `num_reflections` | `int` | `1` | ≥ 1 |
+| `num_reflections` | `int` | `1` | ≥ 1 — see mechanism note above |
 | `content_mode` | `"description" \| "details" \| "hybrid"` | `"details"` | Supabase column to use |
 | `ids_file` | `string \| null` | `null` | Simple filename only — no `/` or `..` |
 | `reasoning_effort` | `"low" \| "medium" \| "high"` | `"medium"` | |
@@ -149,7 +156,9 @@ uv run python database_pipeline.py project-diagnose  # reproducible validity rep
 (name+first-sentences, full-text) pairs, reports HELD-OUT cosine/displacement/clip
 metrics — including the **UMAP-transform vs evidence-anchored kNN** placement
 comparison that motivated Part 11 (kNN k=5: median displacement 0.149 vs 0.179,
-clip 0% vs 35% on corpus short-register round-trips) — and saves
+clip 0% vs 35% on corpus short-register round-trips — the J4 validation run; the
+Part 11 census run of the same comparison reads 0.147, see PROJECT-REPORT §5.2's
+run-labeling note) — and saves
 `data/projection/register_map.npz`; `/locate` applies it (`REGISTER_ALIGNMENT=false`
 disables). The same fit also persists the **short-register support baseline**
 (sorted mean-top-k cosines of the out-of-fold corrected short texts,
@@ -247,9 +256,9 @@ All loaded from `.env` in `llmind-python/`. Override any by setting the env var.
 | `OPENAI_EMBED_MODEL` | `text-embedding-3-small` | No | |
 | `SUPABASE_MATCH_FUNCTION` | `match_media_docs` | No | Must exist as a Supabase RPC function |
 | `SUPABASE_MATCH_COUNT` | `5` | No | |
-| `VLLM_BASE_URL` | `http://100.73.44.12:8001/v1` | No | Change to `http://localhost:8001/v1` for local dev |
-| `VLLM_MODEL` | `qwen` | No | |
-| `VLLM_EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | No | |
+| `VLLM_BASE_URL` | `http://100.73.44.12:8001/v1` | No | **Deployed value (`.env`): `http://localhost:1234/v1`** — LM Studio serving both models |
+| `VLLM_MODEL` | `qwen` | No | **Deployed value: `qwen/qwen3.6-35b-a3b`** (thinking-only — see PROCESS.md §2) |
+| `VLLM_EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | No | **Deployed value: `text-embedding-nomic-embed-text-v1.5` (768-d)** — the model every live artifact (index, projection, register map) was built with. The 384-d default is stale; changing this requires rebuilding the index + rerunning `project` and `project-align` (`/locate` hard-fails on dim mismatch) |
 | `SEED_STRATEGY` | `bracket` | No | generate-at seeding: `bracket` (surround the gap) or `anchor` (legacy) |
 | `REGISTER_ALIGNMENT` | `true` | No | Apply the fitted short→long register correction in `/locate` (needs `register_map.npz`) |
 | `DATA_DIR` | `data` | No | Root for data files |

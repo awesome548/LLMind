@@ -175,7 +175,22 @@ clean); B1 verified live in the preview. Remaining:
     5 tasks, trust-delta probe for the rationale layer, CSI, synthesis →
     investment mapping). Next: pilot session, then L-C/L-D/L-E/L-F per the
     menu.
-12. **Steering-rail polish + brief editing (2026-06-13):** the "pixelated"
+12. **Code-verification sweep (2026-07-03):** every load-bearing PROJECT-REPORT
+    claim audited against the implementation (multi-agent sweep, adversarially
+    verified findings). Corrections applied in place; **PROJECT-REPORT §5.7** is
+    the authoritative record. Six confirmed defects await fixing — headline:
+    the annotation "too-broad" diagnostic is mathematically unreachable
+    (`annotate.py:124`, threshold 80%-of-corpus vs counts capped at 30) and
+    `parse_membership` silently drops quoted-number JSON arrays
+    (`annotate.py:90`) — both §5.4-item-5-class findings whose green tests
+    validate impossible inputs. Also: session-load validation (session-io.ts:46),
+    duplicate-label mind-map highlight (simple-mindmap.tsx:214), placeholder row
+    counted as a project (page.tsx:2138), submit_keyed race (jobs.py:79). Test
+    counts as of this date: backend 152 checks (139 offline), frontend 66.
+    **Execution spec: ITERATION-M-PLAN.md** — Wave 1 (pilot-blocking fixes +
+    study-mode instrumentation) → pilot → Wave 3; five owner decisions are queued
+    in its §II.B (M-R9c), incl. the ANNOTATION_VERSION bump/re-run.
+13. **Steering-rail polish + brief editing (2026-06-13):** the "pixelated"
     strip star was the clipped-score dashed outline breaking into dots at
     20px → clipped stars now render solid at 0.7 opacity, clamped to the
     rail edge, with a tooltip (TESTING §12.1b). Rails are draggable

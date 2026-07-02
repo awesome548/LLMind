@@ -26,7 +26,7 @@ Next.js 16 frontend. React 19, Bun, TanStack Query, Zustand.
 | Hooks — queries | `src/features/mindmap/hooks/use-related-projects-query.ts` | React Query: fetch related projects on topic select |
 | Hooks — mutations | `src/features/mindmap/hooks/use-generate-nodes-mutation.ts` | React Query: generate child nodes via LLM (async job) |
 | Hooks — mutations | `src/features/mindmap/hooks/use-generate-taxonomy-mutation.ts` | React Query: generate full taxonomy (returns `corpus_similarity` for the domain notice) |
-| Store | `src/store/mindmap-store.ts` | Zustand v2; persists the WHOLE exploration — tree, coords, discovered, provenance, candidates, pruning (see ZUSTAND.md) |
+| Store | `src/store/mindmap-store.ts` | Zustand ^5 (persist schema version 2, with a v1 migration); persists the WHOLE exploration — tree, coords, discovered, provenance, candidates, pruning (see ZUSTAND.md) |
 | Components | `src/components/mindmap/` | `SimpleMindMap` (mind-elixir wrapper; `nodeStates` styles rejected/chosen), `SimpleProjectPanel` (accepts `focusProject`) |
 | Dialog | `src/features/mindmap/components/generate-taxonomy-dialog.tsx` | Taxonomy generation form (project overview, reasoning, mode) |
 | Data | `src/features/mindmap/data/schema-mindmap-data.ts` | Static initial taxonomy + `taxonomyToMindmapNodes()` converter |
@@ -118,40 +118,62 @@ The backend returns `{ Name: "Relevant projects will appear here" }` when Supaba
 
 ## Component Map
 
+*(Rebuilt 2026-07-03 from the actual tree — the previous map predated the entire
+design-space subsystem.)*
+
 ```
 src/
 ├── app/
+│   ├── layout.tsx / providers.tsx    # Root layout, QueryClient provider
+│   ├── page.tsx                      # Landing page (stale demo copy — see PROJECT-REPORT §5.7)
 │   └── mindmap/
-│       └── page.tsx                  # Main page — all wiring here
+│       └── page.tsx                  # Main orchestrator — all view wiring (~2.3k lines)
 ├── components/
+│   ├── design-space/
+│   │   ├── design-space-surface.tsx  # The map: SVG lattice, glyphs, honesty layer, lens
+│   │   ├── schema-table.tsx          # The living schema (aspects × options, receipts, facets)
+│   │   ├── cross-tab-view.tsx        # Option×option morphological lens + generate-into-gap
+│   │   ├── axes-view.tsx             # Bipolar scatter (Perspectives drill-down)
+│   │   ├── examine-view.tsx          # Perspectives: alignment instrument
+│   │   ├── candidate-strips.tsx      # Shared strips + steering rails (dock + Perspectives)
+│   │   ├── candidate-panel.tsx       # Dual-layer candidates (choices + brief)
+│   │   ├── compare-candidates-dialog.tsx
+│   │   ├── steer-result-card.tsx     # The veto card
+│   │   ├── proposal-chips.tsx        # C1 informing-back chips
+│   │   ├── reflection-chip.tsx       # C2 burden-inverted reflections
+│   │   └── replay-timeline.tsx       # C3 Fusion-style timeline
 │   ├── mindmap/
 │   │   ├── simple-mindmap.tsx        # mind-elixir wrapper
 │   │   └── simple-project-panel.tsx  # related projects list
-│   └── ui/                           # shadcn/ui atoms
-│       ├── button.tsx
-│       ├── dialog.tsx
-│       ├── badge.tsx
-│       ├── collapsible.tsx
-│       ├── input.tsx
-│       ├── scroll-area.tsx
-│       └── separator.tsx
+│   └── ui/                           # shadcn/ui atoms (badge, button, card, collapsible,
+│                                     #   dialog, input, scroll-area, separator, sheet, sonner)
 ├── features/
+│   ├── design-space/
+│   │   ├── hooks/                    # 18 hooks — see REACT-QUERY.md
+│   │   ├── schema-utils.ts           # Pure schema/annotation/coverage view models (+tests)
+│   │   ├── replay-utils.ts           # Pure replay overlay (+tests)
+│   │   ├── examine-utils.ts          # Pure strip metrics (+tests)
+│   │   ├── candidate-utils.ts        # Candidate text composition (+tests)
+│   │   ├── exploration-stats.ts      # Pure study stats (+tests)
+│   │   └── types.ts                  # Projection payload types
 │   └── mindmap/
-│       ├── components/
-│       │   └── generate-taxonomy-dialog.tsx
-│       ├── data/
-│       │   └── schema-mindmap-data.ts
-│       ├── hooks/
-│       │   ├── use-related-projects-query.ts
-│       │   ├── use-generate-nodes-mutation.ts
-│       │   └── use-generate-taxonomy-mutation.ts
+│       ├── components/               # generate-taxonomy-dialog, generate-nodes-dialog
+│       ├── data/schema-mindmap-data.ts  # Default taxonomy (public/schema_selected.json, 6 aspects)
+│       ├── hooks/                    # 3 hooks — see REACT-QUERY.md
+│       ├── tree-utils.ts             # Pure tree ops (+tests)
 │       └── types.ts                  # MindmapNode, MindmapSelection, etc.
 ├── store/
-│   └── mindmap-store.ts
+│   └── mindmap-store.ts              # THE store — see ZUSTAND.md (+ invariant tests)
 ├── types/
-│   └── openapi.ts                    # Auto-generated — do not edit
+│   ├── openapi.ts                    # Auto-generated — do not edit
+│   └── api-aliases.ts                # Regen-safe aliases + job-result shapes
 └── lib/
-    ├── api-client.ts
+    ├── api-client.ts                 # Direct backend baseURL (see CLAUDE.md)
+    ├── run-job.ts                    # 202-job polling (1.5s interval, 5min default timeout)
+    ├── session-io.ts                 # Versioned session save/load (+tests)
+    ├── export-exploration.ts         # Markdown exploration record (+tests)
+    ├── view-interactions.ts          # Shared zoom/pan grammar
+    ├── svg-glyphs.ts / node-colors.ts
     └── utils.ts
 ```
 
@@ -161,12 +183,12 @@ src/
 
 | Package | Version | Purpose |
 |---|---|---|
-| `next` | 16.1.6 | Framework |
+| `next` | ^16.2.7 | Framework |
 | `react` | 19.2.3 | UI |
-| `@tanstack/react-query` | ^5 | Server state / async data |
-| `zustand` | ^5 | Client state |
-| `axios` | ^1 | HTTP client |
-| `mind-elixir` | ^5 | Mindmap renderer |
+| `@tanstack/react-query` | ^5.90 | Server state / async data |
+| `zustand` | ^5.0 | Client state (persist schema **version 2** — see ZUSTAND.md) |
+| `axios` | ^1.13 | HTTP client |
+| `mind-elixir` | ^5.9 | Mindmap renderer |
 | `radix-ui` | ^1 | Headless UI primitives |
 | `tailwindcss` | ^4 | Styling |
 | `lucide-react` | ^0.577 | Icons |

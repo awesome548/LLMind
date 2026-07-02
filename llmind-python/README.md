@@ -1,5 +1,13 @@
 # LLMind — Taxonomy Generator
 
+> **Scope note (2026-07-03):** this README documents the original *data-pipeline era*
+> (scraping, Supabase ingestion, clustering, taxonomy CLI). The system has since grown
+> a full FastAPI backend (projection/placement, corpus annotation, candidates,
+> steering, jobs) documented in [`BACKEND.md`](BACKEND.md), and the **live stack is
+> fully local**: `VECTOR_STORE=local`, a 768-d `nomic-embed-text-v1.5` index
+> (`data/local_index.npz`, 209 projects), and LM Studio at `localhost:1234` serving
+> both models. Values below marked ⚠ were corrected in the 2026-07-03 sweep.
+
 Generates a structured **design-space taxonomy** from a corpus of project artefacts stored in Supabase, using an LLM with enforced structured output.
 
 The taxonomy models the design space as a set of **Aspects** (key dimensions) and **Options** (concrete alternatives per dimension), ready for downstream embedding, clustering, and visualisation.
@@ -88,8 +96,8 @@ Run the migration in the Supabase SQL editor:
 | `SUPABASE_EMB_HYBRID_TABLE` | `media_emb_hybrid` | Hybrid embeddings |
 | `SUPABASE_RAW_TABLE` | `raw_projects` | Table for raw scraped records |
 | `OPENAI_EMBED_MODEL` | `text-embedding-3-small` | OpenAI embedding model (1536 dims) |
-| `VLLM_BASE_URL` | `http://localhost:8000/v1` | Default local vLLM server URL |
-| `VLLM_EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | Default vLLM embedding model (384 dims) |
+| `VLLM_BASE_URL` | `http://100.73.44.12:8001/v1` | ⚠ corrected — the config.py default; an earlier version of this table said `:8000`, which is the FastAPI backend's own port. **Deployed (`.env`): `http://localhost:1234/v1`** (LM Studio) |
+| `VLLM_EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | ⚠ stale default (384 dims). **Deployed: `text-embedding-nomic-embed-text-v1.5` (768 dims)** — the model all live artifacts were built with; see BACKEND.md |
 | `BASE_URL` | `https://awards.mediaarchitecture.org` | Scraper base URL |
 | `DATA_DIR` | `data/` | Local data directory |
 | `ANALYSIS_DIR` | `analysis/` | Analysis output directory |
@@ -291,31 +299,52 @@ uv run generate_taxonomy.py openai --dev --source all_supabase
 
 ## Project layout
 
+*(⚠ rebuilt 2026-07-03 — the previous tree placed several modules in directories
+that no longer exist, e.g. `data/models.py`, `pipeline/storage.py`.)*
+
 ```
 llmind-python/
-├── database_pipeline.py      # CLI entry point (thin — delegates to pipeline/)
+├── backend/                  # FastAPI app — see BACKEND.md for every endpoint
+│   ├── main.py               # Router mounting + CORS
+│   ├── projection/           # Surface, /locate placement, generate-at, axes, metrics
+│   ├── corpus/               # Annotation, rationale, coverage probe, similar/relevance
+│   ├── candidates/           # Draft-brief, alignment, steering
+│   ├── related_projects/     # Precedent search + generate-nodes
+│   ├── taxonomy/             # Taxonomy generation endpoint
+│   ├── reflections/          # Reflection drafting
+│   └── jobs.py, jobs_router.py  # Async job pool + polling
+│
+├── database_pipeline.py      # Typer CLI: init/analyze/ingest/cluster/farthest +
+│                             #   project / project-align / project-calibrate /
+│                             #   project-diagnose / project-log-stats
 ├── generate_taxonomy.py      # LLM orchestration and taxonomy generation
-├── scrape_projects.py        # Scrape projects → raw_projects in Supabase
+├── scrape_projects.py        # Scraper (Supabase or local JSON)
+├── build_local_index.py      # Builds the live 768-d local index (npz + meta)
+├── test_projection.py        # 152-check test harness (no pytest; python test_projection.py)
 ├── config.py                 # Centralised settings via pydantic-settings
 │
-├── pipeline/                 # Modular pipeline logic
-│   ├── constants.py          # All settings-derived constants and table/column maps
-│   ├── models.py             # EmbedRecord dataclass
-│   ├── data.py               # Data helpers: extract, clean, build_embed_records
-│   ├── ml.py                 # Math/ML: UMAP, KMeans, farthest-point, normalisation
-│   ├── storage.py            # Supabase I/O: fetch and upsert helpers
-│   ├── clients.py            # OpenAI / vLLM client factories
+├── pipeline/
+│   ├── constants.py          # Settings-derived constants and table/column maps
+│   ├── data_ops.py           # Pure transforms: clean_records, build_embed_records
+│   ├── ml.py                 # UMAP, KMeans, farthest-point, normalisation
+│   ├── projection.py         # Frozen PCA→UMAP, grid/density, place_by_neighbors
+│   ├── register_alignment.py # Short→long register correction + support baseline
+│   ├── log_stats.py          # generate_log.jsonl aggregation
 │   └── viz.py                # Cluster scatter plot (matplotlib)
 │
-├── data/
-│   ├── models.py             # Pydantic schema: Taxonomy, Aspect, Option, ProjectRecord
-│   └── prompts.py            # System prompt and generation templates
-│
 ├── utils/
+│   ├── models.py             # Pydantic schema: Taxonomy, Aspect, Option, ProjectRecord
+│   ├── prompts.py            # All prompt templates (+ versions)
+│   ├── clients.py            # OpenAI / local-server client factories
+│   ├── local_store.py        # Local npz vector search
+│   ├── supabase.py           # Supabase client and artefact fetch helpers
 │   ├── modes.py              # BackendMode + ContentMode enums
-│   ├── iter.py               # Generic iteration utilities (chunked)
-│   ├── json.py               # JSON load/save utilities
-│   └── supabase.py           # Supabase client and artefact fetch helpers
+│   ├── iter.py               # chunked()
+│   └── json.py               # JSON load/save utilities
+│
+├── data/                     # Artifacts: scraped.json, local_index.npz(+meta),
+│                             #   projection/{model.joblib,surface.json,register_map.npz,
+│                             #   annotations/, rationales/, *_log.jsonl}
 │
 └── migrations/
     ├── supabase_raw_table.sql        # raw_projects table

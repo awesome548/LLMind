@@ -5,7 +5,12 @@ recalibration + evidence-anchored placement, ITERATION-PLAN Parts 10–11) and a
 references section (§8); updated 2026-06-13 with the schema iterations (§5.6:
 Iteration K's living schema, the design-language round, and Iteration L round 1 —
 ITERATION-PLAN Parts 12–13), new feature entries (§2.11–2.16), and status markers on
-the §6 ways forward, two of which are now paid. Supersedes-as-overview (does not
+the §6 ways forward, two of which are now paid; updated 2026-07-03 with a **full
+code-verification sweep** — every load-bearing claim in §§1–5 was re-audited against
+the implementation, corrections were applied in place (marked "[corrected
+2026-07-03]"), diagrams and a plain-language glossary were added for
+interaction-design readers, and a new §5.7 records the audit method, the confirmed
+defects, and the documentation repairs. Supersedes-as-overview (does not
 replace) the working documents now archived in
 [`documentations/`](documentations/). Grounded in the original research dissertation
 ("Automated Generation and Exploration of Design Space with Large Language Models",
@@ -49,6 +54,94 @@ with per-activity dynamics), with every view — map, tree, cross-tab, axes — 
 it. The map is the evidence lens, no longer the thesis. Iteration L (2026-06-13) began
 paying the dissertation's remaining findings directly (§5.6).
 
+### 1.1 Technical terms, in plain language *(added 2026-07-03 for interaction-design readers)*
+
+This report leans on a handful of machine-learning concepts. Each is defined here
+once, in design-research terms; the rest of the document uses them freely.
+
+- **Embedding.** A way of turning a piece of text into a long list of numbers
+  (here, 768 of them) such that texts with similar *meaning* get similar numbers.
+  Every project description and every taxonomy node gets a position in one shared
+  "meaning space"; nearness in that space ≈ relatedness of meaning, as judged by a
+  language model. (Model in use: a locally-run `nomic-embed-text-v1.5`.)
+- **Cosine similarity.** The standard score for "how close are two embeddings"
+  (1 = same meaning-direction, 0 = unrelated). When the report says *"true 768-d
+  cosine"* it means similarity measured in the full meaning space, *before* any
+  flattening to two dimensions — the faithful measurement.
+- **Projection (PCA → UMAP).** Algorithms that flatten the 768-number positions
+  onto a 2-D map so humans can see them. Like flattening a globe onto paper, this
+  necessarily distorts. The report's **trustworthiness 0.760** quantifies the
+  distortion: roughly, 76% of each point's true nearest neighbours survive as
+  nearby points on the 2-D map (Venna & Kaski, 2001).
+- **Frozen.** The 2-D layout was computed once from the 209 corpus projects and is
+  never recomputed. New items are placed *into* the existing map rather than
+  reshaping it — which is what makes positions stable across sessions and the map
+  usable as a record of the exploration.
+- **Top-5 neighbour placement ("evidence-anchored", a k-nearest-neighbour
+  interpolation).** A new idea is positioned at the weighted average of the map
+  positions of the 5 real projects most similar to it — literally "where its
+  closest precedents already sit". Because a weighted average of positions inside
+  the map cannot land outside it, "off the map" geometry is impossible by
+  construction (§5.2 explains why that trade was taken).
+- **Percentile.** "Your score beats X% of a reference group." Corpus support 84%
+  means: this idea has as much nearby precedent evidence as the best-supported
+  ~16% of real projects have for themselves, when they are described at
+  comparable length.
+- **Register (short vs long text).** The embedding of a two-line node label
+  behaves differently from the embedding of a full project description — same
+  topic, different *register* of writing. The register correction is a learned
+  adjustment (fitted from the corpus's own short/long text pairs) that makes short
+  node texts comparable to the long-description corpus.
+- **Placement confidence (a Jaccard overlap).** For each placed dot, compare two
+  top-10 neighbour lists — one measured in the full meaning space, one on the 2-D
+  map — and score their agreement from 0 to 1. Low agreement = the 2-D position is
+  an artifact; the dot renders dashed.
+
+### 1.2 The system at a glance *(added 2026-07-03)*
+
+```mermaid
+flowchart LR
+    subgraph designer["Designer's browser — llmind-web"]
+        direction TB
+        structure["Structure mode<br/>tree ⇄ schema table ⇄ cross-tab"]
+        space["Design Space map<br/>corpus + ideas + candidates + gaps"]
+        persp["Perspectives<br/>designer-defined axes & strips"]
+        store["One shared exploration state<br/>(tree, coords, candidates,<br/>events, reflections — persisted)"]
+        structure --- store
+        space --- store
+        persp --- store
+    end
+
+    subgraph backend["FastAPI backend — llmind-python"]
+        direction TB
+        tax["Taxonomy generation"]
+        loc["Placement /locate<br/>+ support + confidence"]
+        gen["Generate-at-gap, cross-tab cell,<br/>steering, reflections (async jobs)"]
+        ann["Corpus annotation,<br/>rationale, coverage probe"]
+        rel["Related-projects retrieval"]
+    end
+
+    subgraph local["Local model server (LM Studio)"]
+        emb["Embedding model<br/>nomic-embed 768-d"]
+        llm["Local LLM<br/>Qwen3.6 35B (thinking)"]
+    end
+
+    subgraph artifacts["Frozen artifacts — data/"]
+        corpus["209 MAB projects<br/>+ 768-d embeddings"]
+        surf["Frozen 2-D layout<br/>(48×48 lattice, density)"]
+        rmap["Register map +<br/>short-register support baseline"]
+    end
+
+    designer -->|"direct HTTP (not proxied)"| backend
+    backend --> local
+    backend --> artifacts
+```
+
+*(An optional OpenAI path exists for taxonomy generation; every other LLM/embedding
+call in the running configuration is local. The corpus was scraped from the Media
+Architecture Biennale archive: 210 projects discovered, 209 indexed — one record is
+dropped at indexing for having no usable description text.)*
+
 ---
 
 ## 2. The system as a logic chain: feature → what it does for the designer
@@ -62,9 +155,51 @@ longer matches the architecture's hierarchy. Since Iteration K the canonical
 representation is the living design-space schema (§2.11); the map (§2.4), axes
 (§2.8), and cross-tab (§2.12) are lenses on it — see the §3 addendum.*
 
+*The architecture-as-it-stands, visually (added 2026-07-03):*
+
+```mermaid
+flowchart TB
+    schema["THE LIVING DESIGN-SPACE SCHEMA<br/>aspects × options, with per-activity dynamics:<br/>chosen · rejected · generated · informed<br/><i>(the canonical representation — §2.11)</i>"]
+
+    subgraph lenses["Lenses — ways of looking at the schema"]
+        tree["Mind-map tree §2.2<br/><i>local structure, editing</i>"]
+        map["Design Space map §2.4<br/><i>the EVIDENCE lens: where ideas sit<br/>among 209 real projects</i>"]
+        xtab["Cross-tab §2.12<br/><i>the MORPHOLOGICAL lens:<br/>option-pair gaps, nameable</i>"]
+        axes["Semantic axes §2.8<br/><i>re-projection on the<br/>designer's own constraints</i>"]
+    end
+
+    subgraph instruments["Evidence instruments"]
+        annot["Corpus annotation §2.11<br/><i>per-option counts with receipts</i>"]
+        rat["Rationale layer §2.15<br/><i>why this dimension?</i>"]
+        probe["Coverage probe §2.15<br/><i>what dimension is missing?</i>"]
+        dock["Inspector dock + steering §2.13<br/><i>convergence, measured & vetoable</i>"]
+    end
+
+    subgraph loops["The loops — informing ⇄ filtering, closed & recorded"]
+        props["Proposals §2.14<br/><i>instruments offer options back</i>"]
+        refl["Reflections §2.14<br/><i>one-line whys, AI-drafted</i>"]
+        tl["Timeline §2.14<br/><i>replayable record of commitments</i>"]
+    end
+
+    schema --- lenses
+    schema --- instruments
+    instruments --> props
+    props -->|"accepted, with provenance"| schema
+    schema --> tl
+    refl --> tl
+```
+
 ### 2.1 Taxonomy generation (project brief → structured dimensions)
-**Mechanism:** the designer writes a project overview; the LLM (with self-reflection
-rounds, retrieval over the corpus) returns Aspects/Options with descriptions.
+**Mechanism:** the designer writes a project overview; the LLM, prompted with a fixed
+exemplar set of 50 corpus projects (pre-selected for diversity by farthest-point
+sampling), returns Aspects/Options with descriptions in one structured call.
+*[Corrected 2026-07-03: this section previously claimed "self-reflection rounds,
+retrieval over the corpus". The code audit found neither is true of the running
+system — the dissertation-era Self-Refine loop exists in the code but is commented
+out (`generate_taxonomy.py:225–242`; the `num_reflections` API parameter now only
+alters prompt wording), and the corpus grounding is the fixed exemplar set, not a
+per-query retrieval. The claim as previously written overstated the mechanism; §5.7
+logs this as an audit finding and a candidate for re-enabling.]*
 **Contribution:** *informing at the domain level.* This is the dissertation's
 "conceptual primer" — its study showed it surfaces constraints a designer's initial
 mental model omits (the participant immediately recognized environmental data and
@@ -82,8 +217,13 @@ constraints be "explicit, manipulable entities". The dissertation validated the 
 of the standing reasons the spatial view exists.
 
 ### 2.3 Related precedents (every abstract idea, anchored in real work)
-**Mechanism:** the selected node's text is embedded and matched against the scraped
-MAB corpus; matching projects (name, description, image) appear beside the map.
+**Mechanism:** a composite query for the selected node — its ancestry path, its
+description, and its label, joined as `lineage | description | topic` — is embedded
+and matched against the scraped MAB corpus; matching projects (name, description,
+image) appear beside the map. *(Precision note 2026-07-03: this query is embedded
+raw, without the register correction that placement applies — the §5.5
+retrieval-inconsistency finding, re-confirmed in the code audit; unification is §6
+item 5's prerequisite.)*
 **Contribution:** *grounding.* An option stops being a plausible-sounding LLM phrase
 and becomes "a thing real designers have built, here are five of them". This is both an
 interpretability device (what does 'kinetic facade' actually mean in practice?) and a
@@ -97,6 +237,29 @@ centroid of their top-5 corpus precedents (evidence-anchored placement, Part 11 
 same anchors that drive corpus support), density shading shows where real work clusters,
 and a 48×48 lattice of clickable empty cells covers the rest. Selection is shared with
 the mind map — two views, one state.
+
+*How one dot gets its position, its evidence score, and its trust cue — one pipeline,
+one set of anchors (added 2026-07-03; verified against `backend/projection/service.py`):*
+
+```mermaid
+flowchart TB
+    txt["Node text<br/>'topic. one-line description'"]
+    embed["Embed with the local model<br/>→ 768 numbers"]
+    reg["Register correction<br/><i>adjust the short-text embedding so it is<br/>comparable to full project descriptions</i>"]
+    anchors["Find the 5 most similar<br/>real corpus projects<br/><i>(true 768-d cosine)</i>"]
+
+    pos["POSITION<br/>weighted average of the<br/>5 anchors' frozen map positions<br/><i>— the dot sits amid its precedents;<br/>cannot land off the map</i>"]
+    sup["CORPUS SUPPORT<br/>mean similarity to the same 5 anchors,<br/>read as a percentile of what real projects<br/>score when described at node length<br/><i>— pale fill when evidence is thin</i>"]
+    conf["PLACEMENT CONFIDENCE<br/>do the dot's 2-D neighbours match its<br/>true meaning-space neighbours?<br/><i>— dashed outline when they disagree</i>"]
+    panel["RELATED-PROJECTS PANEL<br/><i>(currently a separate query —<br/>the §5.5 inconsistency)</i>"]
+
+    txt --> embed --> reg --> anchors
+    anchors --> pos
+    anchors --> sup
+    pos --> conf
+    txt -.->|"different composite query,<br/>no register correction"| panel
+```
+
 **Contribution — four distinct ones:**
 1. **Overview.** The whole exploration is visible at once in a stable frame — the thing
    the dissertation's participant asked for and the mind map could not give.
@@ -118,6 +281,33 @@ location-conditioned generation: seeds that surround the gap, an explicit
 "fill the gap, don't imitate or average" prompt, descriptions written project-style,
 and the result drawn with a trail from the clicked cell to where each idea actually
 landed (drift), parented under the spatially-nearest aspect.
+
+*The interaction, as a sequence — the designer sees and can veto the evidence before
+any generation happens (added 2026-07-03):*
+
+```mermaid
+sequenceDiagram
+    actor D as Designer
+    participant M as Map
+    participant B as Backend
+    participant L as Local LLM
+
+    D->>M: click an empty cell
+    M->>B: peek (no LLM, no cost)
+    B-->>M: seed projects that bracket the gap<br/>+ nearby explored ideas + parent aspect
+    M-->>D: GAP PREVIEW — the exact evidence<br/>a generation would be conditioned on
+    alt designer vetoes
+        D->>M: dismiss — nothing generated
+    else designer confirms
+        D->>M: generate here
+        M->>B: generate-at (same deterministic seeds)
+        B->>L: "fill the gap between these precedents —<br/>don't imitate or average them"
+        L-->>B: new options, written project-style
+        B-->>M: options placed by the §2.4 pipeline,<br/>each with a DRIFT trail from click to landing
+        M-->>D: new dots + trails + provenance chips
+    end
+```
+
 **Contribution:** *informing with intent.* Standard LLM ideation answers "give me more
 like X". This answers "give me what belongs in the space between these precedents that
 nobody has built" — a question a designer cannot even pose in a chat interface. The
@@ -144,6 +334,16 @@ also the *only* outsideness signal: placement is a convex combination of precede
 positions, so "off the map" geometry can no longer occur, and the retired "beyond
 corpus range" band's job moved to the channel that was honest all along); generation
 **drift** drawn as trails rather than hidden.
+
+*Each signal answers exactly one question a designer might wrongly assume the map has
+already answered (added 2026-07-03):*
+
+| Signal | The question it answers | Where it shows | Plain reading |
+|---|---|---|---|
+| **Trustworthiness** (0.760) | "How faithful is this whole 2-D layout to true similarity?" | legend, once | ~¼ of true neighborhood structure did not survive flattening — read regions, not exact distances |
+| **Placement confidence** | "Is *this dot's* position among its true neighbours?" | dashed outline per dot | dashed = the 2-D spot disagrees with the meaning-space evidence — trust the precedents panel, not the pixel |
+| **Corpus support** | "How much real precedent evidence exists for this idea at all?" | fill strength per dot | washed-out = little precedent — possibly novel, possibly vaguely phrased; the receipts tell which |
+| **Drift** | "Did the generated idea actually land where I aimed?" | trail from click to dot | long trail = the LLM answered a nearby question, not the one the click asked |
 **Contribution:** *the difference between a picture and an instrument.* A designer can
 act on spatial claims only if the tool says when they are unreliable — and "this idea
 has little precedent evidence" is itself design information (it may mean *novel*, or
@@ -192,6 +392,24 @@ judgments) → per-option **counts with receipts** (click a badge, read the proj
 Halskov-granularity diagnostics (too-broad / unprecedented), and ± **facets** that fade
 non-matching projects on the map. Cell styling carries the living-schema dynamics:
 ring = chosen, struck = rejected, italic = informed.
+
+*The annotation pipeline — how a count earns its receipts (added 2026-07-03; verified
+against `backend/corpus/annotate.py`):*
+
+```mermaid
+flowchart TB
+    opt["One option<br/>e.g. 'LED wall panels'"]
+    short["Embedding shortlist:<br/>the 30 corpus projects most similar<br/>to the option text<br/><i>(cheap, but 'aboutness' only)</i>"]
+    judge["Local-LLM membership judgment,<br/>in chunks of 5 projects<br/><i>'does this project genuinely<br/>exemplify this option?'<br/>(window-aware token budgets —<br/>the §5.6 thinking-model recipe)</i>"]
+    receipts["COUNT WITH RECEIPTS<br/>'LED wall panels — 9 projects'<br/>click the badge → read all nine"]
+    diag["Granularity diagnostics<br/>unprecedented: ≤1 project<br/>too-broad: ≥80% of corpus<br/><i>(the too-broad check is currently<br/>unreachable — §5.7 defect D1)</i>"]
+    cache["Per-option cache<br/><i>taxonomy edits only re-judge<br/>changed options</i>"]
+
+    opt --> short --> judge --> receipts
+    judge --> cache
+    receipts --> diag
+```
+
 **Contribution:** *the overview debt paid, with evidence attached.* Counts are evidence
 with receipts, never verdicts — the corpus⇄taxonomy bridge Halskov annotated by hand,
 automated. This is what §6 item 5 asked for ("support → receipts") at the categorical
@@ -269,8 +487,11 @@ on that") — without forcing it on designers who'd rather see the territory fir
 ### 2.17 Researcher backstage (not designer-facing, by design)
 Drift/clip/support logging per generation; generation/steer/annotation logs;
 `project-log-stats`, `project-calibrate`, `project-align`, `project-diagnose` CLIs;
-register-gap correction; 200 automated tests across both stacks (134 backend / 66
-frontend), plus meaning-level manual walkthroughs (TESTING §6–15).
+register-gap correction; 218 automated checks across both stacks as of 2026-07-03
+(152 backend — 139 runnable offline, 13 gated behind live-server flags — and 66
+frontend; the backend counts one `check()` assertion as one test case in its
+no-dependency harness; the previously cited 134/66 was the 2026-06-13 snapshot,
+counted the same way), plus meaning-level manual walkthroughs (TESTING §6–15).
 **Contribution:** the validity case. None of the designer-facing claims above (gaps are
 meaningful, placements are usable, generation fills gaps, annotation counts are real)
 is left as an assertion — each has a number, a log, and a reproducible check behind it.
@@ -469,7 +690,9 @@ How much did the approaches actually help the objective? Split the claims:
 ## 5. The iterations of 2026-06-12/13: placement, then the living schema
 
 §5.1–5.5 cover the placement round; §5.6 covers what followed the same week —
-Iteration K (the schema re-centering) and Iteration L round 1.
+Iteration K (the schema re-centering) and Iteration L round 1; §5.7 (added
+2026-07-03) records the code-verification sweep that audited this report against
+the implementation.
 
 Two observations — both made by the project's owner *while actually using the tool* —
 drove one more round of geometry work. The full record (diagnostics, alternatives,
@@ -525,7 +748,11 @@ grounds, so the change was re-litigated rather than assumed. Three findings sett
   refitting relayouts the frozen space every persisted session depends on). Kernel
   ridge regression — the lightweight literature remedy, via scikit-learn (Pedregosa et
   al., 2011) — was CV-tuned over an (α, γ) grid and still lost to kNN on every
-  statistic (median displacement 0.178 vs **0.147**; transform: 0.179).
+  statistic (median displacement 0.178 vs **0.147**; transform: 0.179). *(Run
+  labeling, 2026-07-03: 0.147 is the Part 11 census run; the J4 validation re-run of
+  the same comparison — the one BACKEND.md, TESTING and PROCESS cite — reads 0.149
+  vs 0.179. Two runs, same verdict; the figures should not be mixed across runs, as
+  an earlier draft here did.)*
 - **Outsideness moved to the channel that was honest all along.** A convex combination
   of precedent positions cannot leave the corpus footprint, so geometric novelty
   claims are gone *by construction* — but the round-trip numbers show that channel was
@@ -613,8 +840,9 @@ Two things this small bug teaches, beyond its fix:
   receipts work (§6 item 5).
 
 All three defects in this section were found by one person *using* the prototype for
-minutes at a time — none by the then-126-test harness (200 tests as of 2026-06-13,
-§2.17; the point stands at any count). That is the strongest argument item 2 of §6
+minutes at a time — none by the then-126-test harness (218 checks as of 2026-07-03,
+§2.17; the point stands at any count — and §5.7's audit added six more code-found
+defects the harness was also green for). That is the strongest argument item 2 of §6
 has.
 
 ### 5.6 From geometry to schema: Iteration K and Iteration L round 1 (2026-06-12 → 13)
@@ -637,6 +865,9 @@ report-level account.
    before any count was trusted. It passed on the fourth prompt architecture (below),
    with counts spreading 18→0 across options and a mean shortlist acceptance of 0.231 —
    the judgment layer demonstrably filtering, not rubber-stamping, embedding aboutness.
+   *(0.231 is the gate-run snapshot of 2026-06-12; recomputed over the current
+   annotation cache on 2026-07-03 the same statistic reads 0.262 — a point-in-time
+   observation, not a contract, and the filtering conclusion holds at either value.)*
 2. **Lenses and instruments (B).** The inspector dock and steering rails (§2.13); the
    cross-tab lens with generate-into-gap (§2.12). The system's first write access to
    designer text shipped with the evidence rule intact: language moves, embeddings
@@ -674,7 +905,12 @@ rationale layer and coverage probe (§2.15), and the entry choice with an editab
 persisted project brief (§2.16). The first live coverage probe proposed
 "Spatial-Perceptual Integration" from the five worst-covered projects — a plausible
 blind spot (embodiment/materiality) in a taxonomy of six technology-and-content
-dimensions — and it now stands in the schema as the seventh aspect. The study's
+dimensions — and it was accepted as the seventh aspect *of that working session's
+schema*. *[Precision, 2026-07-03: accepted proposals live in the session state
+(store + session files), by design — the shipped default taxonomy remains the six
+dimensions in `public/schema_selected.json`, and "Spatial-Perceptual Integration"
+appears in no source or data file. An earlier phrasing here could be read as a
+change to the default; it was not.]* The study's
 paperwork was drafted the same day: USER-FLOWS.md (ten flows, each naming its free
 instrumentation) and USER-TESTING-PLAN.md (a value-proposition-centred plan with a
 trust-delta probe aimed squarely at the rationale layer's reason for existing).
@@ -719,6 +955,86 @@ trust-delta probe aimed squarely at the rationale layer's reason for existing).
 5. **The external-evidence count is still zero.** Two more iterations of plausible,
    instrumented, internally-validated design claims have been added to the pile the
    study must clear. The paperwork existing makes this less excusable, not more.
+
+### 5.7 The code-verification sweep (2026-07-03): auditing the report against the build
+
+Three weeks after Iteration L, every load-bearing claim in this report was re-audited
+against the implementation — the same discipline §5.4 demands of metrics, applied to
+the report itself. Method: the codebase was swept by parallel readers (backend
+services, pipeline/CLI, frontend views, state layer); ten core factual claims were
+traced to specific code and data artifacts; the documentation stack was
+cross-checked for contradictions; and a bug hunt ran with **adversarial
+verification** — every candidate finding was handed to an independent pass
+instructed to *refute* it, and only findings that survived are reported (two did
+not, and are excluded).
+
+**What the audit confirmed (8 of 10 core claims, exactly as stated).** The corpus is
+209 projects embedded in 768 dimensions; the projection is the frozen PCA→UMAP with
+the stated parameters and trustworthiness 0.760 at k=15; placement is the
+similarity-weighted centroid of the top-5 precedents' frozen coordinates and cannot
+leave the corpus footprint; the lattice is 48×48; the semantic axes are exact cosine
+differences with no stochastic step; candidates retrieve precedents in the true
+metric; steering is a single revision, always delivered as a veto card. The §5.5
+retrieval-inconsistency claim was also re-confirmed in code: the Related Projects
+panel embeds a composite `lineage | description | topic` query with no register
+correction, while placement corrects its query — the two paths genuinely diverge.
+
+**What the audit corrected (applied in place, marked in their sections).**
+1. **§2.1 overstated the taxonomy mechanism** — the Self-Refine loop is commented
+   out (one structured LLM call; `num_reflections` only alters prompt wording) and
+   the corpus grounding is a fixed 50-project exemplar set, not per-query
+   retrieval. This is the sweep's most consequential finding: a *mechanism* claim,
+   not a number, had drifted from the code. Re-enabling the reflection loop (or
+   deleting the parameter) is now an explicit decision to make, not a silent gap.
+2. **§5.6's "seventh aspect" phrasing** implied the coverage-probe result persisted
+   into the default taxonomy; it lives in the working session's state, and the
+   shipped default remains six aspects.
+3. **Numbers refreshed with run labels**: test counts 134/66 → 152/66 (2026-07-03
+   count; same counting unit); mean shortlist acceptance 0.231 (gate run) vs 0.262
+   (current cache); kNN median displacement 0.147 (Part 11 census) vs 0.149 (J4
+   validation) — previously mixed across runs in §5.2; corpus 209 correctly
+   attributed to the index (the raw scrape holds 210; one record drops at indexing
+   for empty description text).
+
+**Confirmed defects, logged for the next iteration** (all verified reachable; none
+yet fixed — they are work items, not history; the execution spec, with fix designs,
+meaning-level gates, and the sequencing relative to the study, is
+[`ITERATION-M-PLAN.md`](ITERATION-M-PLAN.md)):
+
+| # | Where | What | Why it matters here |
+|---|---|---|---|
+| D1 | `backend/corpus/annotate.py:124` | The "too-broad" granularity diagnostic is mathematically unreachable: counts are capped at the 30-project shortlist, but the threshold is 80% of the full 209-project corpus (167.2). It silently returns "no too-broad options" on every run — and its unit test passes only because it hand-feeds a count (180) the real pipeline can never produce. | §5.4 item 5, recurring *exactly*: instruments validating instruments. A green test certifying a dead branch. |
+| D2 | `backend/corpus/annotate.py:90` | If the local LLM formats its answer as quoted numbers (`["1","2"]` instead of `[1,2]`) the parser silently keeps *zero* members for that chunk — the annotation count understates, and the wrong result is cached to disk. | The §5.6 local-stack lesson's remaining tail: the salvage logic covers malformed JSON but not *well-formed JSON of the wrong type*. Counts feed receipts, diagnostics, and rationale. |
+| D3 | `src/lib/session-io.ts:46` | Loading a session file validates only that `nodes` is an array; a corrupt or hand-edited file with, e.g., `"coords": null` passes validation, then crashes the page at render (no error boundary) instead of showing the "could not load" message. | The trust boundary of the study instrument: session files are the study's capture format (§2.10); a malformed one should degrade, not white-screen. |
+| D4 | `src/components/mindmap/simple-mindmap.tsx:214` | The mind-map highlight resolves the selected node *by label text*, keeping only the first node per duplicate label — selecting the second of two same-named options (which the schema explicitly supports) highlights the wrong node in the tree, while every other view tracks the right one. | A §5.5-class defect: the binding between a claim ("this is your selection") and what is displayed is a correctness surface no instrument watches. |
+| D5 | `src/app/mindmap/page.tsx:2138` | When retrieval finds no matches, the backend's placeholder row ("Relevant projects will appear here") is *counted and rendered* as one clickable project — the panel claims "1" related project that does not exist, while the map correctly shows none. | Same class as D4: the panel and the map disagree about the same evidence. |
+| D6 | `backend/jobs.py:79` | The job-deduplication guard has a small race: two simultaneous identical requests can both slip past the check and start duplicate local-LLM annotation runs. Bounded harm (identical results, cache converges) — but it defeats the guard precisely in the scenario it exists for. | Robustness of the shared local stack under the multi-view UI that Iteration K introduced. |
+
+Two hygiene notes travel with these: `use-annotation-query.ts` embeds a **raw NUL
+byte** as a cache-key delimiter (functionally fine; makes git/grep treat the file as
+binary — write it as an escape sequence instead), and the frontend's landing page
+(`src/app/page.tsx`) still links to a `/projects` route that does not exist and
+describes the app as "minimal pages".
+
+**Documentation repairs made in the same sweep** (details in each file):
+`llmind-web/README.md` was untouched framework boilerplate — replaced;
+`llmind-python/README.md` documented a local-model URL that collides with the
+backend's own port and a stale module layout — corrected; `llmind-python/CLAUDE.md`
+described the local embeddings as 384-d, which is true only of a dormant
+database column, not the live 768-d pipeline — corrected, and the projection CLIs it
+omitted are now listed; the archived `LEARN.md` and `DESIGN-SPACE-VIZ.md` carry
+dated staleness banners (their bodies stay unmodified, per the §7 archival policy)
+because each teaches an architecture decision that was since reversed.
+
+**What this changes about §4.3 and §6 — read critically.** The sweep is more of the
+same medicine the report already prescribes, and it inherits the same limitation:
+every issue above was found by *reading and instrumenting the code*, none by a user.
+D1 and D2 strengthen §5.4 item 5 (a meaning-level check would have caught both — a
+too-broad option *must exist* in any 26-option taxonomy judged against 30-project
+shortlists; a chunk where the model plainly accepted projects must not count zero).
+D4 and D5 strengthen §5.5 (the claim–evidence binding in the interface remains
+unwatched). None of it displaces §6 item 2: the study is still the only source of
+knowledge about whether any of this matters to a designer.
 
 ---
 
@@ -836,14 +1152,14 @@ All prior working documents are archived, unmodified in content, in
 
 | Document | What it holds |
 |---|---|
-| [`DESIGN-SPACE-VIZ.md`](documentations/DESIGN-SPACE-VIZ.md) | Original design-space concept, invariants, the three hard problems, M0–M3 build record |
+| [`DESIGN-SPACE-VIZ.md`](documentations/DESIGN-SPACE-VIZ.md) | Original design-space concept, invariants, the three hard problems, M0–M3 build record *(carries a 2026-07-03 staleness banner: its embedding-model specifics predate the 768-d index)* |
 | [`DESIGN-SPACE-ITERATION-PLAN.md`](documentations/DESIGN-SPACE-ITERATION-PLAN.md) | The full critique→iteration history: Parts 1–13 (weaknesses, Iterations A–L, measurements, decision records K9 + Part 13's dissertation audit and menu) |
 | [`DESIGN-SPACE-PERSPECTIVES-PLAN.md`](documentations/DESIGN-SPACE-PERSPECTIVES-PLAN.md) | F1 lens + F2 axes design rationale and risks |
 | [`DESIGN-SPACE-TESTING.md`](documentations/DESIGN-SPACE-TESTING.md) | Test protocol: automated harness + manual meaning-level walkthroughs (§6–8 = Iterations H–J, §9–13 = Iteration K, §14 = the heuristic round, §15 = Iteration L round 1) |
 | [`USER-FLOWS.md`](documentations/USER-FLOWS.md) | The ten user journeys (F0–F9), each tied to a value-proposition component and its free event-log instrumentation — doubles as study task templates |
 | [`USER-TESTING-PLAN.md`](documentations/USER-TESTING-PLAN.md) | The drafted study: value proposition (4 components), concepts-as-bets, five tasks, trust-delta probe, CSI, synthesis→investment mapping |
 | [`PROJECT_DEV.md`](documentations/PROJECT_DEV.md) | Early development log with per-change justifications |
-| [`LEARN.md`](documentations/LEARN.md) | Layer-by-layer learning guide to the whole codebase (designer-friendly) |
+| [`LEARN.md`](documentations/LEARN.md) | Layer-by-layer learning guide to the whole codebase (designer-friendly) *(carries a 2026-07-03 staleness banner: its API-connection chapter teaches the proxy architecture that was since reversed — see CLAUDE.md)* |
 
 Live reference docs stay with their subsystems: [`CLAUDE.md`](CLAUDE.md) (hub),
 [`PROCESS.md`](PROCESS.md) (session handoff + the hard-won local-stack rules),

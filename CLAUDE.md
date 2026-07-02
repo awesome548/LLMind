@@ -19,6 +19,9 @@ llmind-web/      Next.js frontend (React 19, Bun)
 
 | Doc | Contents |
 |-----|----------|
+| [`PROJECT-REPORT.md`](PROJECT-REPORT.md) | The master report: what the system is, the research argument, iterations, critical reflection, §5.7 code-verification audit + known defects |
+| [`PROCESS.md`](PROCESS.md) | Session handoff: execution state, hard-won local-LLM stack rules, next steps |
+| [`ITERATION-M-PLAN.md`](ITERATION-M-PLAN.md) | The next-iteration plan: engineering fixes (§5.7 defects, with gates) + design-research questions + pilot sequencing |
 | [`llmind-python/BACKEND.md`](llmind-python/BACKEND.md) | API endpoints, env vars, architecture, CLI commands, error patterns |
 | [`llmind-web/FRONTEND.md`](llmind-web/FRONTEND.md) | Frontend architecture, scripts, feature flows, component map |
 | [`llmind-web/ZUSTAND.md`](llmind-web/ZUSTAND.md) | Zustand store shape, actions, persistence |

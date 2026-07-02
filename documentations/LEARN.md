@@ -16,6 +16,23 @@
 > endpoints). The foundations below (pipeline, embeddings, taxonomy generation,
 > router/service pattern) are still accurate.
 
+> ⚠️ **Staleness corrections (2026-07-03 code-verification sweep — the body below is
+> archived unmodified; trust these notes over the text where they conflict):**
+> 1. **The API-connection chapter (§9.2) teaches the reversed architecture.** The
+>    frontend NO LONGER calls the backend through the Next.js rewrites proxy with
+>    `baseURL '/'`. It calls the backend **directly** (`baseURL =
+>    NEXT_PUBLIC_API_BASE_URL ?? http://localhost:8000`, CORS enabled) because the
+>    dev proxy silently drops long local-LLM responses (50 s+). See the root
+>    `CLAUDE.md` "API connection" section.
+> 2. **Embedding model/dimensions:** any mention of `BAAI/bge-small-en-v1.5` /
+>    384-d as the local embedding describes an early configuration. The live stack
+>    is `text-embedding-nomic-embed-text-v1.5` (**768-d**), served by LM Studio at
+>    `localhost:1234`, and every live artifact (index, projection, register map)
+>    is 768-d.
+> 3. The system's canonical representation is now the **living design-space
+>    schema** with the map/tree/cross-tab/axes as lenses (PROJECT-REPORT §2.11,
+>    §3 addendum) — a re-centering this guide predates entirely.
+
 ---
 
 ## 🚀 Quick Launch
