@@ -10,7 +10,10 @@ code-verification sweep** — every load-bearing claim in §§1–5 was re-audit
 the implementation, corrections were applied in place (marked "[corrected
 2026-07-03]"), diagrams and a plain-language glossary were added for
 interaction-design readers, and a new §5.7 records the audit method, the confirmed
-defects, and the documentation repairs. Supersedes-as-overview (does not
+defects, and the documentation repairs; **§1.3** (same day, at the owner's request)
+justifies each post-dissertation addition and maps the relationships among them —
+the two-geometries rule, the guard instruments, and what remains unverified.
+Supersedes-as-overview (does not
 replace) the working documents now archived in
 [`documentations/`](documentations/). Grounded in the original research dissertation
 ("Automated Generation and Exploration of Design Space with Large Language Models",
@@ -141,6 +144,241 @@ flowchart LR
 call in the running configuration is local. The corpus was scraped from the Media
 Architecture Biennale archive: 210 projects discovered, 209 indexed — one record is
 dropped at indexing for having no usable description text.)*
+
+### 1.3 What this system adds beyond the dissertation — justifications, and how the additions fit together *(added 2026-07-03)*
+
+The dissertation's prototype contained four things: LLM taxonomy generation, the
+interactive mind map, the related-precedents panel, and "Explore with AI"
+expansion. **Everything else in this system is a post-dissertation addition**, and
+this section owes each addition two accounts the feature-by-feature §2 does not
+give: *why it was worth building at all*, and *how it relates to the others* —
+because several additions only make sense as answers to problems that other
+additions created. §2 describes the features; this section defends the system.
+
+#### 1.3.1 Two kinds of additions — held to different standards
+
+The additions divide into two epistemic classes, and the honest reading of this
+report requires keeping them apart:
+
+- **Debt-paying additions** — built to answer findings the dissertation's own
+  study documented. The **schema table** (§2.11) answers P1's literal request
+  ("a table where you can see everything at once"); the **rationale layer and
+  coverage probe** (§2.15) answer "why these seven though… is there no more?";
+  the **brief-first entry** (§2.16) answers "a tool where you can write down what
+  you're imagining… and then it gives you ideas depending on that". These carry
+  the strongest justification available to this project — a real user asked for
+  them — but note the asymmetry: the *need* is evidenced; the *particular
+  solutions built* are not yet validated by anyone.
+- **New-bet additions** — the empirical ground layer, the map, aimed generation,
+  candidates, steering, the honesty layer, the loops. These are justified below
+  from the literature and from internal measurement, and **no external designer
+  has used any of them** (§4.3). Every justification in this section should be
+  read with that ceiling in mind; where a claim is testable only by the study,
+  it is flagged inline with its probe (USER-TESTING-PLAN §9 / ITERATION-M M-R#).
+
+#### 1.3.2 The foundational bet: one meaning space, several renderings, one rule
+
+Every post-dissertation addition stands on a single substrate: all texts in the
+system — the 209 corpus projects, taxonomy nodes, generated ideas, candidate
+briefs — live in one 768-dimensional meaning space (§1.1). The additions are, in
+essence, different *renderings* of that one space, plus instruments that guard
+the seams between them:
+
+```mermaid
+flowchart TB
+    space["ONE MEANING SPACE<br/>768-d embeddings of everything:<br/>209 corpus projects · taxonomy nodes ·<br/>generated ideas · candidate briefs"]
+
+    subgraph renderings["Three renderings — each with a stated fidelity contract"]
+        map2d["The 2-D map §2.4<br/><i>frozen flattening: readable at a glance,<br/>distorted — trustworthiness 0.760</i>"]
+        axes["Semantic axes §2.8<br/><i>exact similarity scores on the designer's<br/>own poles: faithful, but two<br/>dimensions at a time</i>"]
+        schema["Schema annotation §2.11<br/><i>LLM-judged membership over a metric<br/>shortlist: categorical, nameable,<br/>receipts attached</i>"]
+    end
+
+    subgraph guards["Guards — one per seam"]
+        conf["placement confidence<br/><i>do true and 2-D neighbours agree?</i>"]
+        drift["drift trails<br/><i>aimed there, landed here</i>"]
+        polediag["pole-quality & redundancy<br/>diagnostics"]
+        gate["granularity flags +<br/>meaning-level spot-check gates"]
+    end
+
+    space -->|"frozen PCA→UMAP layout +<br/>top-5 precedent placement"| map2d
+    space -->|"cos(v, pole A) − cos(v, pole B)"| axes
+    space -->|"top-30 shortlist →<br/>local LLM judges each"| schema
+    map2d --- conf
+    map2d --- drift
+    axes --- polediag
+    schema --- gate
+```
+
+The rule that disciplines the whole arrangement — stated here once, because
+every relationship below instantiates it:
+
+> **The renderings invite; the meaning space decides.** Any computation whose
+> output a designer might *act on* — the relevance lens, corpus support,
+> precedent retrieval, candidate neighbours, alignment scores, steering
+> measurement, annotation shortlists — is computed in the full 768-d metric.
+> The 2-D map's visible distances are never used as a measurement by the
+> system itself. The map is a stage, not a ruler.
+
+This rule is why the system can afford a distorted map at all: the distortion is
+quarantined to *presentation*, and instruments exist to say where the
+presentation misleads. Whether the *designer* obeys the same rule — or reads
+pixel distance as similarity despite everything — is an open empirical question
+and one of the study's placement probes *(unverified — M-R4, USER-TESTING-PLAN
+§9.3)*.
+
+#### 1.3.3 The relationships, mapped and justified
+
+The user-visible additions pair up around specific tensions. Each row below
+names the relationship, why both sides exist, and what remains unverified.
+
+**(a) Map position vs the relevance lens — the worked example.** A node's map
+*position* is a frozen summary: the weighted centre of its five most-similar
+real projects' positions (§2.4). The *relevance lens* (§2.6) is a live query: it
+recolours **every** corpus project by true 768-d similarity to one chosen
+anchor. Both exist because they answer different questions at different costs.
+Position answers "roughly where does everything sit?" continuously, for all
+nodes at once, at zero interaction cost — and pays for that with 2-D distortion
+(a project the layout placed far away may be genuinely similar). The lens
+answers "how does the *whole field* respond to *this specific idea*?"
+faithfully — including the secondary clusters of relevance the flattening
+exiled to the far side of the map — and pays with interaction cost (pick an
+anchor) and transience (one anchor at a time). The lens exists *because*
+visible distance cannot be trusted for relevance reading; it is the faithful
+overlay for exactly the judgment the map's geometry cannot support.
+*Unverified:* whether designers grasp this division of labour or treat pixel
+distance as relevance anyway; and §4.2 already flags that the lens's per-query
+normalisation quietly invalidates its most natural use (comparing across
+anchors) — a known, documented limitation, not yet a fixed one.
+
+**(b) Position, corpus support, and the precedents panel — one evidence source,
+with one honest exception.** Since Part 11, a node's position and its support
+percentile derive from the *same five anchors* (§5.1–5.3): the dot sits amid
+the projects that constitute its evidence, so position and evidence cannot
+contradict each other the way they did in the LED incident (§5.1). The
+deliberate cost of that coherence is the loss of a diagnostic tripwire (§5.4
+weakness 3). **The honest exception:** the Related Projects panel still embeds
+a *different* composite query with *no* register correction (§5.5, verified
+again in the code audit) — so the five projects the panel shows are not
+guaranteed to be the five that placed the dot. This inconsistency is documented
+rather than hidden, and its repair (one query, one correction policy) is
+ITERATION-M M-E11, deliberately deferred until after the pilot.
+
+**(c) Placement confidence — the seam detector.** Confidence (the
+true-vs-2-D neighbourhood agreement, §1.1) exists *only because* two geometries
+exist. It is the instrument that polices relationship (a): when the meaning
+space and the map disagree about a dot's neighbourhood, the dot renders dashed.
+It flags, it does not fix — a dashed dot still *has* a position, and positions
+invite reading (§5.4 weakness 2). *Unverified:* whether the dashes are noticed
+at all (M-R4).
+
+**(d) Two kinds of gap — spatial and categorical.** The map renders gaps as
+*empty regions between precedents*: suggestive, explorable by wandering,
+inherently diffuse (an empty region might be a real void or a flattening
+artifact). The cross-tab (§2.12) renders gaps as *empty option-pairs*: exact,
+nameable ("no project combines transit-hub siting with live performer input"),
+checkable against the receipts. Both feed the same generation machinery, seeded
+by the precedents that surround the gap. The justification for keeping both is
+that they serve different cognitive moments — the map invites divergent
+wandering; the cross-tab supports claims and briefs — and the study's T3
+deliberately offers both to see which designers reach for *(the choice itself
+is a study measure)*.
+
+**(e) Drift — honesty at the seam between aiming and landing.** A generate-at
+click is an intention expressed in 2-D; the generated ideas are placed by their
+*meaning* in 768-d. Drift (the trail from click to landing, §2.5) is the
+measured difference between the two — the system showing, rather than hiding,
+that aiming on a stage does not guarantee landing on the stage's target.
+*Internally measured* (drift statistics per prompt/seeding variant, §2.17);
+*unverified* whether trails read as honesty or as noise to a designer.
+
+**(f) Candidates and steering — the same space, used for convergence.** A
+candidate is a *composition* (one option per aspect) plus a *brief* — and both
+layers embed into the same meaning space, which is what makes the convergence
+instruments possible: the star's position and precedent neighbours come from
+the same placement pipeline as everything else; the **alignment score**
+measures the agreement between the candidate's two layers (does the brief say
+what the choices commit to?); **steering** revises the brief in language only,
+then uses embedding deltas to *measure* the move (requested vs achieved, along
+vs orthogonal) — deltas as rulers, never constructors (PROCESS §3). This is the
+§1.3.2 rule applied to the system's only write-access to designer text: the LLM
+may propose, the metric may measure, only the designer commits (veto cards,
+§2.13). *Internally verified* (live steering run: requested +0.70, achieved
++0.22 — the instrument detects under-delivery, which is precisely its job);
+*unverified* whether single-move-measured-vetoable steering is *useful*, and
+the achieved-vs-requested gap suggests the local model's moves are small —
+whether that frustrates or reassures designers is a study question.
+
+**(g) Two kinds of "how precedented" — support vs annotation counts.** Corpus
+support (§2.7) is a *metric inference*: mean similarity to the nearest five,
+read as a percentile — continuous, cheap, available for any text, but blind to
+*what kind* of similarity. An annotation count (§2.11) is a *judgment*: the
+local LLM reads each shortlisted project and answers "does this genuinely
+exemplify this option?" — categorical, nameable, receipt-backed, but only
+defined per option and only over the judged shortlist. They can disagree, and
+that disagreement is informative: high support + low count suggests an idea
+that is *near* much real work without being *of* it. The mean shortlist
+acceptance (~0.26 on the current cache) is the standing evidence that the
+judgment layer filters rather than rubber-stamps the metric's shortlist.
+*Honest caveats:* the judge's quality is assured by meaning-level spot-check
+gates (the LED probe), not by systematic validation; the D2 parser defect
+(§5.7) silently zeroed some judgments until 2026-07-03, and the cache re-run
+under the fixed parser is still pending — the counts currently on screen
+predate the fix.
+
+**(h) The rationale layer and coverage probe — the structure explaining
+itself, within limits.** Both are grounded in the annotation counts (g): the
+rationale drafts "why this dimension" *from the evidence*, the probe finds the
+corpus projects the taxonomy fails to describe and asks what dimension they
+exemplify. Their justification is direct (the dissertation's central trust
+finding), but §5.6 weakness 1 stands: a post-hoc explanation generated by the
+same model that generated the structure can *read* grounded without *being*
+calibrated — the planted-dimension probe (USER-TESTING-PLAN §9.1, pending
+adoption) is the designed test of exactly that failure mode. Structure-level
+proposals may also anchor harder than option-level ones (Wadinambiarachchi's
+fixation risk moved up a level) — measurable from the event log (M-R3).
+
+**(i) The loops and the timeline — the framework, made mechanical, recording
+commitments only.** Proposals, reflections, and the replayable timeline close
+the informing↔filtering cycle the whole framework is named for (§2.14), with
+provenance on every accepted item. The record is deliberately a record of
+*commitments*: what was looked at and silently rejected is invisible (§5.6
+weakness 3), so the "reflective record" claim must always be read as
+"…of decisions", not "…of attention".
+
+#### 1.3.4 How it composes — the journey the additions jointly support
+
+Read as one system, the additions form a loop the dissertation's prototype
+could not close: **structure** (brief → schema, with rationale) → **evidence**
+(receipts, map, lens — every abstraction anchored in nameable precedent) →
+**aimed divergence** (gaps, spatial or categorical, filled with
+evidence-conditioned generation) → **measured convergence** (candidates,
+alignment, steering — with veto) → **record** (timeline, reflections,
+provenance) → back to structure (proposals, the coverage probe growing the
+schema). Two invariants make the loop trustworthy at every arrow: the
+**one-metric rule** (§1.3.2 — judgments computed faithfully, renderings only
+display) and the **veto rule** (nothing the AI produces enters the designer's
+structure or text without an explicit accept — chips, cards, previews).
+
+The honest system-level summary, in one table:
+
+| Addition | Class | Standing justification | What would falsify it | Status |
+|---|---|---|---|---|
+| Ground layer (corpus + frozen map) | bet | precedent-grounding fixes Luminate's ungrounded-dimension weakness; frozen coords make exploration cumulative | designers ignore precedents / corpus too small or biased to ground judgments | internally measured; single-domain, n=209 — generality unknown (§6 item 7) |
+| Evidence-anchored placement + support + confidence | bet | position/evidence coherence (§5.2); measured better than the alternative on round-trips | false-familiarity: designers over-trust in-footprint positions and never read the fill (§5.4 w1) | measured on a proxy; designer reading unverified (M-R4) |
+| Relevance lens | bet | faithful relevance reading where 2-D distance lies | nobody uses it; or cross-anchor comparison misuse dominates (§4.2) | built; usage unverified |
+| Gap preview + generate-at | bet | aimed informing chat cannot express; evidence veto before LLM spend | generated ideas don't actually fill gaps (drift ≫), or preview unread | drift instrumented; meaning-level "in-between-ness" partially verified |
+| Schema + annotation receipts | debt-paying | P1's overview request; Halskov's practice, automated | counts distrusted despite receipts; judge unreliable at scale | gate-passed; D2 re-run pending; trust-delta probe pending |
+| Cross-tab + generate-into-gap | bet | exact nameable gaps (Zwicky with receipts) | designers prefer the map's diffuse gaps for everything | built; T3 measures the choice |
+| Candidates + alignment + steering | bet | configurations need representation; convergence with honest instruments | single measured moves feel useless vs chat's fluid iteration | internally verified; usefulness unverified |
+| Rationale + coverage probe | debt-paying | P1's "why these seven / is there no more" | rationale buys uncalibrated trust (accepts the plant) | built; calibration probe pending adoption (M-R9c-5) |
+| Loops + timeline | bet (framework-completing) | informing↔filtering closed and recorded; burden-inverted reflection | record never revisited (VP4 bet fails) | built; revisit-behaviour is a study measure |
+| Honesty layer | bet (meta) | calibrated trust is the difference between a picture and an instrument | signals unread → pure UI cost (§4.2's collapse argument wins) | measurements sound; readership unverified (M-R4) |
+
+The pattern across the Status column is the report's standing self-critique in
+miniature (§4.3): the *measurable-without-users* half of every justification is
+done; the *does-it-help-a-designer* half is uniformly pending, and pends on one
+thing — the study.
 
 ---
 
@@ -1147,26 +1385,39 @@ the unambiguous next move.*
 
 ## 7. Document map
 
-All prior working documents are archived, unmodified in content, in
-[`documentations/`](documentations/):
+*(Restructured by the 2026-07-03 consolidation — full record in
+[`DOC-CONSOLIDATION-PLAN.md`](DOC-CONSOLIDATION-PLAN.md). Every doc is now either
+**live** — one owner per topic, kept current — or **archived** — historical record,
+dated banners only, body never rewritten. The authoritative index is the root
+[`CLAUDE.md`](CLAUDE.md) doc table; this map adds the report's own annotations.)*
+
+**Archived** (in [`documentations/`](documentations/), banner-only):
 
 | Document | What it holds |
 |---|---|
-| [`DESIGN-SPACE-VIZ.md`](documentations/DESIGN-SPACE-VIZ.md) | Original design-space concept, invariants, the three hard problems, M0–M3 build record *(carries a 2026-07-03 staleness banner: its embedding-model specifics predate the 768-d index)* |
-| [`DESIGN-SPACE-ITERATION-PLAN.md`](documentations/DESIGN-SPACE-ITERATION-PLAN.md) | The full critique→iteration history: Parts 1–13 (weaknesses, Iterations A–L, measurements, decision records K9 + Part 13's dissertation audit and menu) |
+| [`DESIGN-SPACE-VIZ.md`](documentations/DESIGN-SPACE-VIZ.md) | Original design-space concept, invariants, the three hard problems, M0–M3 build record *(2026-07-03 banner: its embedding-model specifics and placement mechanism predate the 768-d index and Part 11)* |
+| [`DESIGN-SPACE-ITERATION-PLAN.md`](documentations/DESIGN-SPACE-ITERATION-PLAN.md) | **The frozen iteration history**: Parts 1–13 (weaknesses, Iterations A–L, measurements, decision records K9 + Part 13's dissertation audit and menu). §5 of this report is the synthesis; that file is the record |
 | [`DESIGN-SPACE-PERSPECTIVES-PLAN.md`](documentations/DESIGN-SPACE-PERSPECTIVES-PLAN.md) | F1 lens + F2 axes design rationale and risks |
 | [`DESIGN-SPACE-TESTING.md`](documentations/DESIGN-SPACE-TESTING.md) | Test protocol: automated harness + manual meaning-level walkthroughs (§6–8 = Iterations H–J, §9–13 = Iteration K, §14 = the heuristic round, §15 = Iteration L round 1) |
-| [`USER-FLOWS.md`](documentations/USER-FLOWS.md) | The ten user journeys (F0–F9), each tied to a value-proposition component and its free event-log instrumentation — doubles as study task templates |
-| [`USER-TESTING-PLAN.md`](documentations/USER-TESTING-PLAN.md) | The drafted study: value proposition (4 components), concepts-as-bets, five tasks, trust-delta probe, CSI, synthesis→investment mapping |
-| [`PROJECT_DEV.md`](documentations/PROJECT_DEV.md) | Early development log with per-change justifications |
-| [`LEARN.md`](documentations/LEARN.md) | Layer-by-layer learning guide to the whole codebase (designer-friendly) *(carries a 2026-07-03 staleness banner: its API-connection chapter teaches the proxy architecture that was since reversed — see CLAUDE.md)* |
+| [`PROJECT_DEV.md`](documentations/PROJECT_DEV.md) | Early development log *(2026-07-03 banner: superseded by this report + the iteration plan; kept for provenance)* |
 
-Live reference docs stay with their subsystems: [`CLAUDE.md`](CLAUDE.md) (hub),
+**Live in `documentations/`** (the study instruments and onboarding):
+
+| Document | What it holds |
+|---|---|
+| [`USER-TESTING-PLAN.md`](documentations/USER-TESTING-PLAN.md) | **The study protocol SSOT**: value proposition (4 components), five tasks, trust-delta probe, CSI, synthesis→investment mapping — its §9 (2026-07-03) folds in the planted-dimension, structure-fixation, placement-semantics, and honesty-signal probes |
+| [`USER-FLOWS.md`](documentations/USER-FLOWS.md) | The ten user journeys (F0–F9), each tied to a value-proposition component and its free event-log instrumentation — doubles as study task templates |
+| [`LEARN.md`](documentations/LEARN.md) | Onboarding guide, slimmed 2026-07-03 to mental models per layer (inventories live with their owners); the formerly-stale §9.2 API-connection and §11.5 embedding-dims chapters are fixed in place |
+
+**Live with their subsystems:** root [`CLAUDE.md`](CLAUDE.md) (hub + the doc index),
 [`PROCESS.md`](PROCESS.md) (session handoff + the hard-won local-stack rules),
-[`llmind-python/BACKEND.md`](llmind-python/BACKEND.md),
+[`ITERATION-M-PLAN.md`](ITERATION-M-PLAN.md) (next-iteration plan),
+[`llmind-python/BACKEND.md`](llmind-python/BACKEND.md) (**everything backend**, incl.
+the data-pipeline reference folded in from the old backend README),
 [`llmind-web/FRONTEND.md`](llmind-web/FRONTEND.md) (incl. the locked design language),
 [`llmind-web/ZUSTAND.md`](llmind-web/ZUSTAND.md),
-[`llmind-web/REACT-QUERY.md`](llmind-web/REACT-QUERY.md).
+[`llmind-web/REACT-QUERY.md`](llmind-web/REACT-QUERY.md). The three `README.md`s are
+thin launchers; the vendored `Mind-elixir.md` library copy was deleted.
 
 ---
 

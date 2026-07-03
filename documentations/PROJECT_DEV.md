@@ -1,5 +1,11 @@
 # PROJECT_DEV.md — Development Log & Rationale
 
+> ⚠️ **SUPERSEDED (2026-07-03 doc consolidation; body below archived unmodified).**
+> This early development log is retained for provenance only. Its content is
+> superseded by [`../PROJECT-REPORT.md`](../PROJECT-REPORT.md) (the synthesis) and
+> [`DESIGN-SPACE-ITERATION-PLAN.md`](DESIGN-SPACE-ITERATION-PLAN.md) (the full
+> critique→iteration record). Do not update this file.
+
 Context and justification for the work done building the **Design Space** view and
 hardening the surrounding system. Written for future reference: each entry says
 *what* changed, *why*, and *how it was verified*. Companion docs:

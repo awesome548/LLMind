@@ -91,6 +91,10 @@ export function SchemaTable({
   );
 
   const diag = annotation?.diagnostics;
+  // Counts are judged over each option's top-`shortlistK` nearest corpus
+  // projects (not the whole corpus), so a count is capped at shortlistK and the
+  // too-broad flag means "matches most of its nearest" (ITERATION-M M-E1/F4).
+  const shortlistK = annotation?.meta.shortlist_k ?? 0;
   const facetsActive = facets.include.size > 0 || facets.exclude.size > 0;
   // Balanced multi-column packing (CSS multicol): aspects fill the vertical
   // space instead of one long clipped row. ~2 aspects per column, max 4 wide.
@@ -250,7 +254,13 @@ export function SchemaTable({
                               flipY: rect.top > window.innerHeight * 0.55,
                             });
                           }}
-                          title={`${rec.count} corpus projects exemplify this — click for the list`}
+                          title={
+                            diag?.too_broad.includes(opt.id)
+                              ? `Matches ${rec.count} of its ${shortlistK} nearest corpus projects — likely too broad to discriminate. Click for the list.`
+                              : diag?.unprecedented.includes(opt.id)
+                                ? `Little precedent: ${rec.count} corpus project${rec.count === 1 ? '' : 's'} exemplify this. Click for the list.`
+                                : `${rec.count} corpus project${rec.count === 1 ? '' : 's'} exemplify this (of its ${shortlistK} nearest). Click for the list.`
+                          }
                           className={`rounded-full border px-1.5 text-[10px] tabular-nums ${
                             diag?.too_broad.includes(opt.id)
                               ? 'border-amber-400 text-amber-700'

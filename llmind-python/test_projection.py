@@ -303,6 +303,28 @@ def test_log_stats() -> None:
           knn["nodes"] == 1 and abs(knn["drift_mean"] - 0.15) < 1e-9
           and all(s["placement"] == "umap" for s in stats if s is not knn))
 
+    # M-E13: annotation-cache aggregation (the annotation-stats CLI's pure core).
+    from pipeline.log_stats import aggregate_annotation_cache
+
+    ann_records = [
+        {"count": 30, "shortlist_k": 30},  # saturated (30 >= 0.8*30=24)
+        {"count": 24, "shortlist_k": 30},  # saturated (exactly at threshold)
+        {"count": 12, "shortlist_k": 30},
+        {"count": 1, "shortlist_k": 30},   # unprecedented
+        {"count": 0, "shortlist_k": 30},   # unprecedented
+    ]
+    a = aggregate_annotation_cache(ann_records)
+    check("annotation-stats: option count", a["n_options"] == 5)
+    check("annotation-stats: count spread", (a["count_min"], a["count_median"], a["count_max"]) == (0, 12, 30))
+    check("annotation-stats: mean shortlist acceptance",
+          abs(a["mean_shortlist_acceptance"] - round((30 + 24 + 12 + 1 + 0) / 30 / 5, 3)) < 1e-9)
+    check("annotation-stats: saturated (>=0.8*k) count", a["saturated"] == 2)
+    check("annotation-stats: unprecedented (<=1) count", a["unprecedented"] == 2)
+    check("annotation-stats: empty cache is safe",
+          aggregate_annotation_cache([])["n_options"] == 0)
+    check("annotation-stats: zero shortlist_k excluded from acceptance",
+          aggregate_annotation_cache([{"count": 3, "shortlist_k": 0}])["mean_shortlist_acceptance"] is None)
+
 
 def test_annotation_helpers() -> None:
     """Part 12 A2 pure parts: hashes, membership parsing, granularity flags."""
@@ -325,6 +347,12 @@ def test_annotation_helpers() -> None:
     check("annotate: drops out-of-range and duplicates",
           ann.parse_membership("[0, 2, 2, 31]", 30) == [2])
     check("annotate: empty array is a valid verdict", ann.parse_membership("[]", 30) == [])
+    # M-E2: the local model routinely quotes its numbers; v4 silently dropped them.
+    check("annotate: coerces a quoted-number array", ann.parse_membership('["1", "2"]', 30) == [1, 2])
+    check("annotate: coerces mixed quoted/bare numbers",
+          ann.parse_membership('[1, "3", 5]', 30) == [1, 3, 5])
+    check("annotate: rejects JSON booleans as members (bool is not a project)",
+          ann.parse_membership("[true, 2, false]", 30) == [2])
 
     check("annotate: salvage takes the LAST array in the reasoning tail",
           ann.salvage_from_reasoning("maybe [1, 2, 3]... no. I will output [1, 6].", 10) == [1, 6])
@@ -366,11 +394,21 @@ def test_annotation_helpers() -> None:
           parse_idea('{"name": "The \\"Wave\\"", "desc": "B"}')
           == {"name": 'The "Wave"', "desc": "B"})
 
-    diag = ann.diagnostics_for({"a": 180, "b": 1, "c": 12, "d": 0}, 209)
-    check("annotate: too-broad flagged at >=80% of corpus", diag["too_broad"] == ["a"])
+    # M-E1: too-broad is SHORTLIST saturation (>=0.8*k), reachable with real
+    # counts (capped at k=30). The old test fed count=180 — an input the pipeline
+    # cannot produce (counts never exceed the 30-project shortlist), which masked
+    # a dead branch (threshold was 0.8*209 = 167 > 30).
+    diag = ann.diagnostics_for({"a": 26, "b": 1, "c": 12, "d": 0}, 209, 30)
+    check("annotate: too-broad flagged at shortlist saturation (>=0.8*k=24)",
+          diag["too_broad"] == ["a"])
+    check("annotate: below saturation not flagged", "c" not in diag["too_broad"])
+    check("annotate: full saturation (count==k) flags too-broad",
+          ann.diagnostics_for({"x": 30}, 209, 30)["too_broad"] == ["x"])
     check("annotate: unprecedented flagged at <=1", diag["unprecedented"] == ["b", "d"])
     check("annotate: empty corpus yields no flags",
-          ann.diagnostics_for({"a": 1}, 0) == {"too_broad": [], "unprecedented": []})
+          ann.diagnostics_for({"a": 1}, 0, 30) == {"too_broad": [], "unprecedented": []})
+    check("annotate: zero shortlist yields no flags",
+          ann.diagnostics_for({"a": 1}, 209, 0) == {"too_broad": [], "unprecedented": []})
 
 
 def test_reflection_parse() -> None:

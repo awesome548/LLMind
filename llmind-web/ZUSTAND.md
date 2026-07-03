@@ -26,6 +26,10 @@ interface MindmapStoreState {
                                         // when "Edit Brief & Taxonomy" reopens it.
                                         // Scopes the SPACE; candidate briefs
                                         // describe designs within it
+  participantId: string;                // Study tag (ITERATION-M M-E12) — empty
+                                        // outside a study. Set via `?p=` URL param
+                                        // or a facilitator prompt; stamps the
+                                        // exported study bundle + its filename
   nodes: ReadonlyArray<MindmapNode>;    // The working tree (incl. generated nodes)
 
   // ── Design-space exploration state ─────────────────────────────
@@ -57,6 +61,7 @@ interface MindmapStoreState {
                                                // exploration state (new taxonomy
                                                // = new design-space overlay)
   setProjectBrief(brief: string): void;        // persists the generation overview
+  setParticipantId(id: string): void;          // study participant tag (trimmed)
   setNodes(nodes): void;
   mergeCoords(coords): void;
   removeCoords(ids): void;          // e.g. after a rename → re-locate
@@ -89,11 +94,18 @@ interface MindmapStoreState {
 
 Persisted via `partialize` (= `selectSessionSnapshot`, also the session-file
 payload): `contextText`, `contextDescription`, `selectedTopic`,
-`taxonomy`, `projectBrief`, **`nodes`**, **`coords`**, **`discovered`**, **`provenance`**,
+`taxonomy`, `projectBrief`, `participantId`, **`nodes`**, **`coords`**, **`discovered`**, **`provenance`**,
 **`descriptionById`**, **`candidates`** (incl. briefs + trails),
 **`activeCandidateId`**, **`optionState`**, **`axesConfig`**, **`rubric`**,
 **`usage`**, **`events`**, **`reflections`**. New slices restore
 defaults-first, so pre-C session files reset them instead of leaking state.
+
+On load, `parseSessionFile` (`src/lib/session-io.ts`) is the trust boundary: it
+type-checks every slice and resets any that is present-but-malformed to its
+default (returning warnings), so a corrupt/hand-edited file degrades instead of
+crashing render (ITERATION-M M-E3). Adding `participantId` needed **no version
+bump** — the persist merge keeps its initial-state default for older payloads
+(same rule as the post-v2 slices).
 
 The Related Projects panel reads React Query data directly (nothing
 project-related lives in the store). The locate "attempted once" guard is

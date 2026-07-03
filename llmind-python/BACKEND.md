@@ -208,6 +208,25 @@ uv run python database_pipeline.py project-calibrate   # needs the embedding ser
 Re-locates every corpus project by a SHORT text (its name) and reports displacement
 from its true coordinate — quantifies how trustworthy short-text node placement is.
 
+### Annotation stats (offline)
+
+```bash
+uv run python database_pipeline.py annotation-stats    # reads the cache; no server
+```
+Distribution over the cached per-option annotations (`data/projection/annotations/`):
+option count, count min/median/max, **mean shortlist-acceptance** (`count / shortlist_k`),
+and the granularity-flag counts (saturated / unprecedented). Regenerates the
+PROJECT-REPORT §5.6 figures deterministically from the current cache — pure core in
+`pipeline/log_stats.py:aggregate_annotation_cache` (ITERATION-M M-E13).
+
+**Annotation behaviour notes (ITERATION-M):** `parse_membership` now coerces the
+local model's quoted-number arrays (`["1","2"]`) and rejects JSON booleans — v4
+silently counted zero when the model quoted its numbers, so `ANNOTATION_VERSION` is
+bumped to **5** (re-annotate to refresh the cache). The `too_broad` diagnostic now
+measures **shortlist saturation** (`count ≥ 0.8·shortlist_k`, i.e. ≥24 of 30), not a
+share of the whole corpus — the old threshold (`0.8·209 = 167`) exceeded the 30-cap
+and never fired.
+
 ### Async generation (jobs)
 
 `generate-at` and `generate-nodes` are long (local LLM ~50-80s). They return
@@ -261,8 +280,14 @@ All loaded from `.env` in `llmind-python/`. Override any by setting the env var.
 | `VLLM_EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | No | **Deployed value: `text-embedding-nomic-embed-text-v1.5` (768-d)** — the model every live artifact (index, projection, register map) was built with. The 384-d default is stale; changing this requires rebuilding the index + rerunning `project` and `project-align` (`/locate` hard-fails on dim mismatch) |
 | `SEED_STRATEGY` | `bracket` | No | generate-at seeding: `bracket` (surround the gap) or `anchor` (legacy) |
 | `REGISTER_ALIGNMENT` | `true` | No | Apply the fitted short→long register correction in `/locate` (needs `register_map.npz`) |
+| `VECTOR_STORE` | — | No | **Deployed: `local`** — retrieval/embedding runs on the local npz index; the Supabase path below is dormant |
 | `DATA_DIR` | `data` | No | Root for data files |
 | `TAXONOMY_DIR` | `taxonomy` | No | Output path for generated taxonomies |
+| `BASE_URL` | `https://awards.mediaarchitecture.org` | No | Scraper base URL |
+| `SUPABASE_MEDIA_DOC_TABLE` | `media_doc` | No | Supabase path: central flat table |
+| `SUPABASE_EMB_*_TABLE` | `media_emb_description/details/hybrid` | No | Supabase path: embedding tables |
+| `SUPABASE_RAW_TABLE` | `raw_projects` | No | Supabase path: raw scraped records |
+| `ANALYSIS_DIR` / `PLOTS_DIR` | `analysis/` / `plots/` | No | Pipeline output dirs |
 
 ---
 
@@ -291,3 +316,86 @@ except Exception as e:
 - `generate_nodes_from_related_projects()`: pass `should_query_supabase=false` to skip Supabase entirely in tests.
 - `generate_taxonomy()` (taxonomy service): `ids_file` is validated against `data_dir` to prevent path traversal.
 - `OpenAIChat.send_message()`: message history is built immutably — state only persists after both API call and validation succeed.
+
+---
+
+## Data pipeline & corpus CLIs
+
+*(Folded here from `llmind-python/README.md` in the 2026-07-03 doc consolidation —
+this section is the SSOT for the pipeline HOW-TO; the README is now a launcher.)*
+
+Two storage paths (see the hub `llmind-python/CLAUDE.md` for the flow diagrams):
+the **live local path** (`VECTOR_STORE=local`: `scraped.json` → `build_local_index.py`
+→ 768-d npz index → `project` / `project-align` artifacts) and the **dormant
+Supabase path** below (pgvector; kept for the cloud variant).
+
+### Supabase data model
+
+```
+raw_projects          id (text), metadata (jsonb)          ← scraped records
+media_doc             id, name, description, detail, image ← cleaned flat data
+media_emb_description media_doc_id (FK), context, embedding_cloud VECTOR(1536), embedding_local VECTOR(384)
+media_emb_details     (same shape)
+media_emb_hybrid      (same shape)
+```
+
+Migrations in `migrations/` — run `migrate_media_emb_columns.sql` (idempotent) to
+set up or upgrade; `media_doc_tables.sql` is the clean-slate version. ⚠ The
+`VECTOR(384)` column reflects the old bge-small default and is NOT the live local
+dimensionality (768-d nomic — see the env table above and `CLAUDE.md`'s warning box).
+
+**Two embedding axes** (independent; any combination valid):
+- **Content mode** (`--content-mode`): which text → which table.
+  `description` → `media_emb_description` · `details` (default) → `media_emb_details` ·
+  `hybrid` → `media_emb_hybrid` · `all` → all three (ingest only)
+- **Backend mode** (`--embed-mode`): which API → which column.
+  `openai` (default) → `embedding_cloud` · `vllm` → `embedding_local`
+
+### Scraper — `scrape_projects.py`
+
+```bash
+uv run scrape_projects.py scrape --limit 20     # or no --limit for all
+```
+Options: `--limit/-n` (max projects; `0`=all), `--out/-o` (JSON filename under
+`DATA_DIR`), `--delay/-d` (politeness, default 0.8s), `--retries/-r` (4),
+`--backoff`/`--max-backoff` (1.0/10.0s exponential).
+
+### Pipeline commands — `database_pipeline.py`
+
+| Command | What it does | Key options |
+|---|---|---|
+| `init` | Scrape (or load `--scraped-file`) → upsert `raw_projects` | `--scraped-file/-s`, `--limit/-n` |
+| `analyze` | EDA on raw records (word/char counts, histogram) | `--table/-t`, `--batch-size`, `--bins` |
+| `ingest` | Clean → upsert `media_doc` → embed → upsert `media_emb_*` | `--embed-mode/-m`, `--content-mode/-c`, `--save-cleaned`, `--batch-size` (180), `--vllm-base-url`, `--vllm-model` |
+| `cluster` | Embeddings → UMAP (cosine) → KMeans → JSON or `--plot` | `--clusters` (8), `--neighbors` (15), `--min-dist` (0.1), `--pre-pca` (64), `--random-state` (42) |
+| `fetch-cluster <id>` | Print one cluster's projects | `--groups-file` |
+| `farthest` | Greedy cosine farthest-point selection → ids JSON | `--k` (20), `--seed` (42), `--output/-o` |
+| `project` / `project-align` / `project-calibrate` / `project-diagnose` / `project-log-stats` / `annotation-stats` | The design-space subsystem — documented in the Projection/Calibration/Annotation sections **above** | |
+
+### Taxonomy CLI — `generate_taxonomy.py`
+
+```bash
+uv run generate_taxonomy.py openai --source selected -i data/selected_projects.json
+uv run generate_taxonomy.py openai --mode vllm --base-url http://localhost:1234/v1 \
+  --model-name <served-model>            # local stack
+uv run generate_taxonomy.py openai --dev --source all_supabase   # print prompt only
+```
+Options: `--model-name` (see env table for the deployed models — `gpt-4o` in old
+examples is historical), `--mode/-m` (`openai`/`vllm`), `--base-url`, `--source`
+(`selected` ids-file / `all_supabase`), `-i` (ids JSON), `--content-mode`,
+`--reasoning` (low/medium/high, OpenAI only), `--out-file`, `--dev`.
+The **Self-Refine loop is commented out** — see the mechanism note under
+`POST /api/taxonomy/generate` above.
+
+### Typical end-to-end (Supabase path)
+
+```bash
+uv run scrape_projects.py scrape
+uv run database_pipeline.py analyze
+uv run database_pipeline.py ingest --content-mode all
+uv run database_pipeline.py farthest --k 30
+uv run generate_taxonomy.py openai --source selected -i data/selected_projects.json
+```
+
+For the **live local path**, instead: `build_local_index.py` → `database_pipeline.py
+project` → `project-align` (see Placement validity above).

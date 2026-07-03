@@ -50,8 +50,11 @@ JUDGE_BATCH = 5
 # suppress thinking (/no_think) — Qwen3.6 is thinking-only and ignored it,
 # burning every capped budget inside reasoning and answering nothing. v4:
 # thinking is BUDGETED, not fought — small chunks, window-aware max_tokens,
-# and a reasoning-tail salvage when generation still hits the cap.
-ANNOTATION_VERSION = 4
+# and a reasoning-tail salvage when generation still hits the cap. v5:
+# parse_membership now coerces quoted-number arrays (["1","2"]) and rejects JSON
+# booleans — v4 silently counted zero members when the local model quoted its
+# numbers, understating counts and caching the wrong verdict (ITERATION-M M-E2).
+ANNOTATION_VERSION = 5
 # Halskov's granularity principles: an option relevant to almost every
 # instance, or to at most one, carries little discriminating power.
 TOO_BROAD_SHARE = 0.8
@@ -76,6 +79,23 @@ def taxonomy_hash(options: Sequence[Dict[str, str]]) -> str:
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
+def _as_index(value: Any) -> int | None:
+    """Coerce one parsed JSON-array element to a project index, or ``None``.
+
+    Accepts ints, floats, and numeric strings (the local model routinely
+    quotes its numbers as ``["1","2"]``); rejects JSON booleans (``bool`` is an
+    ``int`` subclass in Python, so ``[true]`` would otherwise count as project
+    1) and every other type. Range/dedup is applied by the caller.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
 def parse_membership(text: str, n: int) -> List[int]:
     """1-based exemplifying-project numbers from an LLM response.
 
@@ -87,7 +107,7 @@ def parse_membership(text: str, n: int) -> List[int]:
     if match:
         try:
             parsed = json.loads(match.group(0))
-            candidates = [int(v) for v in parsed if isinstance(v, (int, float))]
+            candidates = [i for v in parsed if (i := _as_index(v)) is not None]
         except (ValueError, TypeError):
             # Array-shaped but not valid JSON (e.g. trailing comma) — salvage
             # the integers from the matched span only.
@@ -114,15 +134,24 @@ def salvage_from_reasoning(reasoning: str, n: int) -> List[int]:
 
 
 def diagnostics_for(
-    counts: Dict[str, int], n_projects: int
+    counts: Dict[str, int], n_projects: int, shortlist_k: int
 ) -> Dict[str, List[str]]:
-    """Granularity flags per Halskov: too-broad and unprecedented options."""
-    if n_projects <= 0:
+    """Granularity flags per Halskov: too-broad and unprecedented options.
+
+    ``too_broad`` measures **shortlist saturation**, not corpus share. Only the
+    top ``shortlist_k`` corpus projects are ever judged per option, so a count
+    can never exceed ``shortlist_k`` (≪ ``n_projects``) — comparing it to a
+    share of the whole corpus (the pre-M-E1 bug) made the flag unreachable. An
+    option that matches most of its OWN nearest neighbours fails to discriminate
+    even among the projects it is closest to: the honest, measurable reading of
+    "too broad". (When ``count == shortlist_k`` the corpus-wide count is only a
+    lower bound — the option saturated everything the judge was shown.)
+    """
+    if n_projects <= 0 or shortlist_k <= 0:
         return {"too_broad": [], "unprecedented": []}
+    saturation = TOO_BROAD_SHARE * min(shortlist_k, n_projects)
     return {
-        "too_broad": sorted(
-            oid for oid, c in counts.items() if c >= TOO_BROAD_SHARE * n_projects
-        ),
+        "too_broad": sorted(oid for oid, c in counts.items() if c >= saturation),
         "unprecedented": sorted(
             oid for oid, c in counts.items() if c <= UNPRECEDENTED_MAX
         ),
@@ -149,8 +178,12 @@ def _load_cached(content_hash: str) -> Dict[str, Any] | None:
 def _save_cached(content_hash: str, record: Dict[str, Any]) -> None:
     directory = _annotation_dir()
     directory.mkdir(parents=True, exist_ok=True)
+    # Stamp the annotation version so tooling (annotation-stats) can tell current
+    # records from orphans left when the version bumps — a version bump changes
+    # the content hash, so old files linger under their old names (ITERATION-M F5).
+    stamped = {**record, "version": ANNOTATION_VERSION}
     (directory / f"{content_hash}.json").write_text(
-        json.dumps(record, ensure_ascii=False), encoding="utf-8"
+        json.dumps(stamped, ensure_ascii=False), encoding="utf-8"
     )
 
 
@@ -281,7 +314,7 @@ def annotate_taxonomy(options: List[Dict[str, str]]) -> Dict[str, Any]:
     return {
         "taxonomy_hash": taxonomy_hash(valid),
         "options": result_options,
-        "diagnostics": diagnostics_for(counts, len(ids)),
+        "diagnostics": diagnostics_for(counts, len(ids), min(SHORTLIST_K, len(ids))),
         "meta": {
             "n_projects": len(ids),
             "shortlist_k": SHORTLIST_K,

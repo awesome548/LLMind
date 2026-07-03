@@ -3,6 +3,7 @@
 import {
   ChevronRight,
   Compass,
+  FlaskConical,
   Focus,
   FolderOpen,
   Grid3x3,
@@ -103,8 +104,10 @@ import {
   computeExplorationStats,
   formatExplorationStats,
 } from '@/src/features/design-space/exploration-stats';
+import { toast } from 'sonner';
 import { buildSessionFile, parseSessionFile } from '@/src/lib/session-io';
-import { downloadTextFile } from '@/src/lib/export-exploration';
+import { buildStudyBundle, studyBundleFilename } from '@/src/lib/study-bundle';
+import { buildExplorationMarkdown, downloadTextFile } from '@/src/lib/export-exploration';
 import { selectSessionSnapshot } from '@/src/store/mindmap-store';
 import { GenerateTaxonomyDialog } from '@/src/features/mindmap/components/generate-taxonomy-dialog';
 import { GenerateNodesDialog } from '@/src/features/mindmap/components/generate-nodes-dialog';
@@ -176,6 +179,8 @@ export default function MindmapPage() {
   const setTaxonomy = useMindmapStore((state) => state.setTaxonomy);
   const projectBrief = useMindmapStore((state) => state.projectBrief);
   const setProjectBrief = useMindmapStore((state) => state.setProjectBrief);
+  const participantId = useMindmapStore((state) => state.participantId);
+  const setParticipantId = useMindmapStore((state) => state.setParticipantId);
   // The working tree + exploration state are persisted in the store so that
   // generated nodes, coordinates, and discovered cells survive a reload.
   const nodes = useMindmapStore((state) => state.nodes);
@@ -823,16 +828,24 @@ export default function MindmapPage() {
     return new Set(events[replayIndex - 1]?.refs ?? []);
   }, [replaying, replayIndex, replayFloor, events]);
 
+  // The real matches, with the backend's "nothing found" placeholder row
+  // removed at the source — so the count badge, the panel, the map highlight,
+  // and the generate-nodes seed set all agree about how many projects exist
+  // (M-E6; the placeholder is never a real, clickable project).
+  const realProjects = useMemo(
+    () => (data?.projects ?? []).filter((p) => p.Name !== PLACEHOLDER_PROJECT_NAME),
+    [data]
+  );
+
   // Corpus ids of the selection's related projects — the panel's examples are
   // also highlighted as places on the design-space map.
   const relatedProjectIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const project of data?.projects ?? []) {
-      if (project.Name === PLACEHOLDER_PROJECT_NAME) continue;
+    for (const project of realProjects) {
       if (project.id) ids.add(project.id);
     }
     return ids;
-  }, [data]);
+  }, [realProjects]);
 
   // ── Candidates: locate each design in the frozen space ──────────────────────
   // A candidate's position is the embedding of its BRIEF when present (the
@@ -1250,6 +1263,14 @@ export default function MindmapPage() {
     [handleGenerateAt]
   );
 
+  // Study mode: a `?p=<id>` URL param tags this session's exports (M-E12). Set
+  // only when unset, so a reload doesn't clobber a facilitator-entered id.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get('p')?.trim();
+    if (p && !useMindmapStore.getState().participantId) setParticipantId(p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Session save/load: the machine-restorable exploration record ────────────
   const handleSaveSession = () => {
     trackUsage('session_save');
@@ -1265,7 +1286,7 @@ export default function MindmapPage() {
     event.target.value = ''; // allow re-selecting the same file
     if (!file) return;
     try {
-      const snapshot = parseSessionFile(await file.text());
+      const { snapshot, warnings } = parseSessionFile(await file.text());
       if (!window.confirm(`Replace the current exploration with "${file.name}"?`)) return;
       restoreSession(snapshot);
       setSelection({ topic: INITIAL_SELECTION.topic, lineage: [...INITIAL_SELECTION.lineage] });
@@ -1275,9 +1296,51 @@ export default function MindmapPage() {
       setLensOn(false);
       attemptedRef.current.clear();
       trackUsage('session_load');
+      if (warnings.length) {
+        // Non-fatal: the session loaded, but some slices were malformed and
+        // reset. Say so rather than silently dropping data (M-E3).
+        toast.warning('Session loaded with repairs', {
+          description: warnings.join(' '),
+        });
+      }
     } catch (error) {
       setGenerateError(error instanceof Error ? error.message : 'Could not load session.');
     }
+  };
+
+  // One-click study bundle (M-E12): the machine-restorable session (event log +
+  // usage + reflections live inside it), the markdown record, and the computed
+  // stats — one file, tagged by participant. Prompts for the id if unset.
+  const handleExportStudyBundle = () => {
+    const entered =
+      participantId ||
+      (window.prompt('Participant ID for this study bundle:', '') ?? '').trim();
+    if (!entered) return;
+    if (entered !== participantId) setParticipantId(entered);
+    const markdown = buildExplorationMarkdown({
+      nodes,
+      descriptionByTopic: activeDescriptionByTopic,
+      descriptionById,
+      optionState,
+      candidates,
+      provenance,
+      coords,
+      discovered,
+      activeCandidateId,
+      events,
+      reflections,
+    });
+    const session = {
+      ...selectSessionSnapshot(useMindmapStore.getState()),
+      participantId: entered,
+    };
+    downloadTextFile(
+      studyBundleFilename(entered, new Date().toISOString().slice(0, 10)),
+      buildStudyBundle({ participantId: entered, session, markdown, stats: explorationStats }),
+      'application/json;charset=utf-8'
+    );
+    trackUsage('study_bundle_export');
+    toast.success('Study bundle exported', { description: `Participant ${entered}` });
   };
 
   const handleGenerateNodes = async (
@@ -1293,11 +1356,8 @@ export default function MindmapPage() {
     setGenerateNodesDialogOpen(false);
 
     try {
-      const fetchedProjects = data?.projects ?? [];
-      const hasRealProjects = fetchedProjects.some(
-        (p) => p.Name !== PLACEHOLDER_PROJECT_NAME
-      );
-      const relatedProjects = hasRealProjects ? fetchedProjects : null;
+      const hasRealProjects = realProjects.length > 0;
+      const relatedProjects = hasRealProjects ? realProjects : null;
 
       const contextDescription = dialogParams?.description ?? description;
 
@@ -1383,6 +1443,21 @@ export default function MindmapPage() {
             className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <FolderOpen className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={handleExportStudyBundle}
+            title={
+              participantId
+                ? `Export study bundle — participant ${participantId}`
+                : 'Export study bundle (session + record + stats, tagged by participant)'
+            }
+            className="relative rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <FlaskConical className="h-4 w-4" />
+            {participantId ? (
+              <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-violet-500" />
+            ) : null}
           </button>
           <input
             ref={sessionFileRef}
@@ -2032,6 +2107,7 @@ export default function MindmapPage() {
           <SimpleMindMap
             nodes={nodes}
             activeTopic={selection.topic}
+            activeNodeId={selection.nodeId}
             onSelect={handleSelect}
             onDataChange={handleNodesChange}
             generatingNodeId={
@@ -2135,9 +2211,9 @@ export default function MindmapPage() {
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                   Related Projects
                 </h2>
-                {data?.projects?.length ? (
+                {realProjects.length ? (
                   <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-                    {data.projects.length}
+                    {realProjects.length}
                   </Badge>
                 ) : null}
               </div>
@@ -2153,7 +2229,7 @@ export default function MindmapPage() {
                   independently (a wrapping scroller would scroll them as one). */}
               <div className="p-4 pt-0">
                 <SimpleProjectPanel
-                  projects={data?.projects ?? []}
+                  projects={realProjects}
                   isLoading={isFetching}
                   focusProject={focusProject ?? null}
                   compact={view === 'space' && Boolean(activeCandidate) && inspectorOpen}

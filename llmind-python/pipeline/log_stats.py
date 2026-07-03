@@ -9,7 +9,50 @@ on data. Pure stdlib — no I/O — so it is unit-testable offline.
 from __future__ import annotations
 
 from statistics import mean, median
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+
+def aggregate_annotation_cache(
+    records: Iterable[Dict[str, Any]],
+    too_broad_share: float = 0.8,
+    unprecedented_max: int = 1,
+) -> Dict[str, Any]:
+    """Distribution summary over cached per-option annotation records.
+
+    Each record is ``{count, project_ids, shortlist_k}`` (one option). Returns
+    the count distribution, the mean shortlist-acceptance (``count / shortlist_k``
+    — the aboutness→exemplification gap the report tracks, §5.6), and how many
+    options hit the granularity flags. Pure stdlib — no I/O — so it can
+    regenerate the report's figures deterministically from the current cache.
+
+    Thresholds are passed in (rather than importing ``backend.corpus.annotate``)
+    to keep this pipeline module free of a backend dependency; the CLI supplies
+    the live values so the numbers match ``diagnostics_for``.
+    """
+    counts: List[int] = []
+    shares: List[float] = []
+    saturated = 0
+    unprecedented = 0
+    for r in records:
+        count = int(r.get("count", 0))
+        k = int(r.get("shortlist_k", 0))
+        counts.append(count)
+        if k > 0:
+            shares.append(count / k)
+            if count >= too_broad_share * k:
+                saturated += 1
+        if count <= unprecedented_max:
+            unprecedented += 1
+    n = len(counts)
+    return {
+        "n_options": n,
+        "count_min": min(counts) if counts else 0,
+        "count_median": float(median(counts)) if counts else 0.0,
+        "count_max": max(counts) if counts else 0,
+        "mean_shortlist_acceptance": round(mean(shares), 3) if shares else None,
+        "saturated": saturated,
+        "unprecedented": unprecedented,
+    }
 
 
 def aggregate_generate_log(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:

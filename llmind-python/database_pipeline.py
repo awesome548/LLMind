@@ -538,6 +538,98 @@ def project_log_stats(
         )
 
 
+@app.command("annotation-stats")
+def annotation_stats(
+    annotations_dir: Path = typer.Option(
+        None, "--dir", help="Annotation cache dir (default: <projection dir>/annotations)."
+    ),
+) -> None:
+    """Distribution stats over the cached corpus annotations.
+
+    Regenerates the PROJECT-REPORT §5.6 figures (mean shortlist-acceptance,
+    count spread, granularity flags) deterministically from the CURRENT cache,
+    so any hard-coded number in the report is re-derivable with one command
+    (ITERATION-M M-E13). Offline — reads only the cache JSONs.
+    """
+    from pipeline.log_stats import aggregate_annotation_cache
+    from backend.corpus import annotate as ann
+
+    resolved = annotations_dir or settings.projection_dir / "annotations"
+    if not resolved.exists():
+        typer.secho(
+            f"No annotation cache at {resolved} — open the Schema view (with the "
+            f"LLM stack up) to build it.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
+    current: List[Dict[str, Any]] = []
+    unversioned: List[Dict[str, Any]] = []
+    orphaned = 0  # versioned but NOT the current version — stale after a bump
+    for path in sorted(resolved.glob("*.json")):
+        try:
+            rec = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue  # a corrupt cache file is skipped, not fatal
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("version") == ann.ANNOTATION_VERSION:
+            current.append(rec)
+        elif "version" not in rec:
+            unversioned.append(rec)
+        else:
+            orphaned += 1
+
+    # Never mix versions (that was the F5 bug). Prefer current-version records;
+    # fall back to unversioned files ONLY when there are no current ones and no
+    # newer orphans (i.e. a pure pre-versioning cache), flagging it.
+    legacy_cache = False
+    if current:
+        records = current
+        ignored = orphaned + len(unversioned)
+    elif unversioned and orphaned == 0:
+        records = unversioned
+        legacy_cache = True
+        ignored = 0
+    else:
+        typer.secho(
+            f"No records at ANNOTATION_VERSION={ann.ANNOTATION_VERSION} "
+            f"({orphaned + len(unversioned)} stale file(s)). Re-annotate to refresh.",
+            fg=typer.colors.YELLOW,
+        )
+        raise typer.Exit(code=0)
+
+    stats = aggregate_annotation_cache(records, ann.TOO_BROAD_SHARE, ann.UNPRECEDENTED_MAX)
+    acc = stats["mean_shortlist_acceptance"]
+    version_label = (
+        f"pre-versioning (< v{ann.ANNOTATION_VERSION})"
+        if legacy_cache
+        else f"v{ann.ANNOTATION_VERSION}"
+    )
+    typer.secho(f"Annotation cache: {resolved}  [{version_label}]", fg=typer.colors.BLUE)
+    typer.echo(f"  cached options        : {stats['n_options']}")
+    typer.echo(
+        f"  count (min/median/max): {stats['count_min']} / "
+        f"{stats['count_median']:.1f} / {stats['count_max']}"
+    )
+    typer.echo(
+        f"  mean shortlist accept : {acc if acc is not None else '—'}  (count / shortlist_k)"
+    )
+    typer.echo(f"  saturated (too-broad) : {stats['saturated']}")
+    typer.echo(f"  unprecedented (<= {ann.UNPRECEDENTED_MAX}) : {stats['unprecedented']}")
+    if legacy_cache:
+        typer.secho(
+            f"  note: these files predate ANNOTATION_VERSION={ann.ANNOTATION_VERSION}; "
+            f"re-annotate to refresh.",
+            fg=typer.colors.YELLOW,
+        )
+    elif ignored:
+        typer.secho(
+            f"  note: ignored {ignored} stale file(s) from an earlier version.",
+            fg=typer.colors.YELLOW,
+        )
+
+
 @app.command("project-calibrate")
 def project_calibrate(
     field: str = typer.Option(
@@ -900,4 +992,13 @@ def project_diagnose(
 
 
 if __name__ == "__main__":
+    # Windows consoles default to cp1252 and crash rendering the help/tables when
+    # a docstring or output contains non-Latin-1 characters (e.g. the "→" in the
+    # module docstring made `--help` raise UnicodeEncodeError). Same fix as
+    # test_projection.py. Best-effort — a stream without reconfigure() is left as-is.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001
+            pass
     app()

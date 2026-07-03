@@ -15,6 +15,12 @@ import { ZOOM_FACTOR, ZOOM_MAX, ZOOM_MIN } from '../../lib/view-interactions';
 interface SimpleMindMapProps {
   nodes: ReadonlyArray<MindmapNode>;
   activeTopic: string;
+  /** Exact node id of the selection, when known. Preferred over `activeTopic`
+   * for highlight sync: two options can share a label (e.g. "Modular" under two
+   * aspects), and a label lookup keeps only the first — so it would highlight
+   * the wrong node (ITERATION-M M-E5). Falls back to `activeTopic` when absent
+   * or stale. */
+  activeNodeId?: string | null;
   onSelect: (selection: MindmapSelection) => void;
   onDataChange?: (nodes: ReadonlyArray<MindmapNode>) => void;
   /** Id of the node currently having children generated — shows a spinner on it. */
@@ -116,6 +122,7 @@ const EMPTY_NODE_STATES: Readonly<Record<string, 'rejected' | 'chosen'>> = {};
 export function SimpleMindMap({
   nodes,
   activeTopic,
+  activeNodeId = null,
   onSelect,
   onDataChange,
   generatingNodeId = null,
@@ -210,10 +217,14 @@ export function SimpleMindMap({
     mindRef.current?.refresh(model.data);
   }, [model.data]);
 
-  // Sync external activeTopic → mind-elixir selection
+  // Sync external selection → mind-elixir selection. Prefer the exact node id
+  // (only when it's a real node in the CURRENT model — a stale id from a prior
+  // tree must not suppress the fallback); otherwise resolve by label.
   useEffect(() => {
     const mind = mindRef.current;
-    const nodeId = model.topicToId[activeTopic];
+    const nodeId =
+      (activeNodeId && model.lineageById[activeNodeId] ? activeNodeId : null) ??
+      model.topicToId[activeTopic];
     if (!mind || !nodeId) return;
     try {
       const nodeEl = mind.findEle(nodeId);
@@ -224,7 +235,7 @@ export function SimpleMindMap({
     } catch {
       isSyncingRef.current = false;
     }
-  }, [activeTopic, model.topicToId]);
+  }, [activeNodeId, activeTopic, model.lineageById, model.topicToId]);
 
   // Position a generation spinner over the node having children generated.
   // Placement is scheduled (not synchronous) so it doesn't setState within the

@@ -77,33 +77,14 @@ steering, C2 reflections). Also remember: **uvicorn has no --reload — kill
 and restart the :8000 backend after every backend edit** (memory file exists
 for this).
 
-## 3. The reasoning chain (compressed)
+## 3. The reasoning chain (pointer)
 
-How we got here — each step recorded fully in the docs noted:
-
-1. **Part 11** (iteration plan): `/locate` placement = similarity-weighted
-   centroid of top-5 corpus anchors (UMAP `.transform()` retired to fallback;
-   measured: kNN median displacement 0.149 vs 0.179, clip 0% vs 35%).
-   "Beyond corpus range" band removed. Evidence rule established: **deltas
-   as rulers and briefs, never constructors** (analogy-arithmetic literature
-   is half-folklore; contrast directions are measurements).
-2. **Support became receipts-bound**: percentile vs short-register baseline
-   (in `register_map.npz`), but the real designer answer is *which projects*
-   — which led to…
-3. **Six-source evidence review** (Part 12 K0 table): Halskov & Lundqvist
-   (filtering = INVESTIGATION not pruning; filter→inform loop), Halskov MAB
-   (annotated schema, counts, cross-tabs, empty cells = exact gaps),
-   Luminate (dimension re-layout validated; ungrounded dimensions weak),
-   Onarheim & Biskjaer (choices/rejections/briefs = self-imposed
-   constraints), Dalsgaard & Halskov PRT (reflection capture, burden-
-   inverted), dissertation (table + rationale debts).
-4. **The re-centering** (Part 12 K1): the deep model is a **living
-   design-space schema**; views are lenses (Structure tree/table, Map =
-   evidence lens, Cross-tabs = morphological lens, Inspector = filtering
-   instruments). The map is no longer the protagonist.
-5. PROJECT-REPORT.md §5 carries the critical reflection (incl. §5.5: the
-   honesty layer audits the math, not the interface; retrieval paths not yet
-   unified — report §6 item 5).
+*(Trimmed 2026-07-03 — this section duplicated the iteration record.)* The full
+how-we-got-here is **ITERATION-PLAN Parts 11–13** (placement re-litigation → the
+K0 six-source evidence review → the living-schema re-centering) and
+**PROJECT-REPORT §5** (the critical synthesis). One rule from that chain is
+load-bearing enough to restate here: **deltas as rulers and briefs, never
+constructors** — embedding arithmetic measures moves; it never writes them.
 
 ## 4. Next steps, in order
 
@@ -190,6 +171,31 @@ clean); B1 verified live in the preview. Remaining:
     **Execution spec: ITERATION-M-PLAN.md** — Wave 1 (pilot-blocking fixes +
     study-mode instrumentation) → pilot → Wave 3; five owner decisions are queued
     in its §II.B (M-R9c), incl. the ANNOTATION_VERSION bump/re-run.
+13. **Wave 1 SHIPPED (2026-07-03):** M-E1..E13 landed; all suites green (backend
+    147/0, frontend 72/0, tsc/eslint clean); frontend changes preview-verified
+    (landing, study bundle export, participant `?p=` tagging, no render errors).
+    Notes for the next session:
+    - **`ANNOTATION_VERSION` is now 5** (M-E2 parser fix). The cache is still v4;
+      **re-annotate before the pilot** — open Structure→Schema with the LLM stack
+      up (or hit `/api/corpus/annotate`), then `annotation-stats` + the LED gate
+      (§5.6) to re-verify. Cross-check the parser fix's cost (M-R9b).
+    - **Pre-warm** (M-E12 part-3): documented as a facilitator procedure, not a
+      script — open Schema (annotation) + let rationale settle, LLM up.
+    - **Bonus fix:** `database_pipeline.py --help` crashed on Windows cp1252 (the
+      "→" in the module docstring) — added a stdout/stderr UTF-8 reconfigure.
+    - Wave 3 still open: M-E7 (submit_keyed race), M-E10 (Self-Refine decision +
+      M-R9a offline experiment), M-E11 (retrieval unification).
+14. **Doc consolidation EXECUTED (2026-07-03, owner decisions applied):**
+    one-owner-per-topic with a live-vs-archived split (stated in root CLAUDE.md's
+    doc table). Backend triplication collapsed (README → launcher; pipeline
+    reference now BACKEND.md "Data pipeline & corpus CLIs"; backend CLAUDE.md =
+    thin hub); LEARN.md slimmed-to-path and LIVE again (stale §9.2/§11.2/§11.5
+    fixed in place); USER-TESTING-PLAN §9 carries the ITERATION-M probes
+    (planted-dimension pending owner adoption + ethics note); PROJECT_DEV
+    superseded-bannered; Mind-elixir.md deleted. **PROJECT-REPORT gained §1.3**:
+    justifications for every post-dissertation addition + the relationship map
+    (the two-geometries rule; per-addition falsifiability + verification status).
+    Record: DOC-CONSOLIDATION-PLAN.md (executed banner).
 13. **Steering-rail polish + brief editing (2026-06-13):** the "pixelated"
     strip star was the clipped-score dashed outline breaking into dots at
     20px → clipped stars now render solid at 0.7 opacity, clamped to the

@@ -4,34 +4,19 @@
 > This guide walks you through the entire LLMind codebase from the simplest ideas to the most advanced patterns, building your understanding one layer at a time.
 > **Scope:** This guide covers only the two active codebases — `llmind-python/` and `llmind-web/`.
 
-> ⚠️ **Currency note (2026-06):** this guide predates the design-space exploration
-> features and describes the foundations only. The tool has since gained: the
-> **Design Space** view (frozen UMAP surface, gap preview → generate-at, relevance
-> lens), the **Perspectives** view (semantic axes), **design candidates**
-> (compose / compare / reject / export), provenance, fidelity metrics, session
-> save/load, and an evaluation log. For the current state read
-> [`DESIGN-SPACE-ITERATION-PLAN.md`](DESIGN-SPACE-ITERATION-PLAN.md) (concepts &
-> history), [`llmind-web/FRONTEND.md`](../llmind-web/FRONTEND.md) and
-> [`llmind-python/BACKEND.md`](../llmind-python/BACKEND.md) (architecture &
-> endpoints). The foundations below (pipeline, embeddings, taxonomy generation,
-> router/service pattern) are still accurate.
-
-> ⚠️ **Staleness corrections (2026-07-03 code-verification sweep — the body below is
-> archived unmodified; trust these notes over the text where they conflict):**
-> 1. **The API-connection chapter (§9.2) teaches the reversed architecture.** The
->    frontend NO LONGER calls the backend through the Next.js rewrites proxy with
->    `baseURL '/'`. It calls the backend **directly** (`baseURL =
->    NEXT_PUBLIC_API_BASE_URL ?? http://localhost:8000`, CORS enabled) because the
->    dev proxy silently drops long local-LLM responses (50 s+). See the root
->    `CLAUDE.md` "API connection" section.
-> 2. **Embedding model/dimensions:** any mention of `BAAI/bge-small-en-v1.5` /
->    384-d as the local embedding describes an early configuration. The live stack
->    is `text-embedding-nomic-embed-text-v1.5` (**768-d**), served by LM Studio at
->    `localhost:1234`, and every live artifact (index, projection, register map)
->    is 768-d.
-> 3. The system's canonical representation is now the **living design-space
->    schema** with the map/tree/cross-tab/axes as lenses (PROJECT-REPORT §2.11,
->    §3 addendum) — a re-centering this guide predates entirely.
+> **Role & currency (2026-07-03 consolidation — this guide is LIVE again, slimmed
+> to a guided path):** LEARN.md teaches the *mental models* — what each layer is
+> for and how the pieces think. It deliberately does NOT carry inventories
+> (endpoints, env tables, module maps, hook lists); those have one home each and
+> this guide points there: [`llmind-python/BACKEND.md`](../llmind-python/BACKEND.md)
+> (backend + pipeline SSOT), [`llmind-web/FRONTEND.md`](../llmind-web/FRONTEND.md),
+> [`ZUSTAND.md`](../llmind-web/ZUSTAND.md), [`REACT-QUERY.md`](../llmind-web/REACT-QUERY.md).
+> The previously-flagged stale sections (§9.2 proxy architecture, §11.5 embedding
+> dims) are now **fixed in place**. This guide still predates the design-space
+> exploration features — for those, read [`../PROJECT-REPORT.md`](../PROJECT-REPORT.md)
+> §1–§2 first (the system's canonical representation is now the **living
+> design-space schema**, with map/tree/cross-tab/axes as lenses — a re-centering
+> this guide's foundations feed into but do not cover).
 
 ---
 
@@ -110,7 +95,7 @@ npx next dev                              # → http://localhost:3000/mindmap
    - [8.6 Error Handling — The 502 Pattern](#86-error-handling--the-502-pattern)
 9. **Layer 5 — The Next.js Frontend (`llmind-web`)**
    - [9.1 App Router & Layout](#91-app-router--layout)
-   - [9.2 API Proxy — How Frontend Talks to Backend](#92-api-proxy--how-frontend-talks-to-backend)
+   - [9.2 Direct API Connection — How Frontend Talks to Backend](#92-direct-api-connection--how-frontend-talks-to-backend)
    - [9.3 React Query — Server State Management](#93-react-query--server-state-management)
    - [9.4 Zustand Store — Client State](#94-zustand-store--client-state)
    - [9.5 Mind Elixir Mind Map Component](#95-mind-elixir-mind-map-component)
@@ -129,7 +114,7 @@ npx next dev                              # → http://localhost:3000/mindmap
     - [11.2 What `mode = vllm` Actually Switches](#112-what-mode--vllm-actually-switches)
     - [11.3 Case A — A Local LLM on Windows](#113-case-a--a-local-llm-on-windows)
     - [11.4 Case B — A Remote Linux vLLM Server over SSH](#114-case-b--a-remote-linux-vllm-server-over-ssh)
-    - [11.5 Embedding Dimensions — The 384 vs 1536 Trap](#115-embedding-dimensions--the-384-vs-1536-trap)
+    - [11.5 Embedding Dimensions — Match the Model to Every Artifact](#115-embedding-dimensions--match-the-model-to-every-artifact)
     - [11.6 Verifying & Troubleshooting](#116-verifying--troubleshooting)
 12. [Hands-On Exercises](#12-hands-on-exercises)
 13. [Further Reading](#13-further-reading)
@@ -213,89 +198,42 @@ LLMind is an **LLM-assisted design-space exploration tool**. Think of it as an A
 
 ## 4. Repository Map
 
+*(Slimmed 2026-07-03 — a hand-copied file tree here went stale within weeks. The
+authoritative maps live with the code: **[`BACKEND.md`](../llmind-python/BACKEND.md)
+→ Architecture table + "Data pipeline & corpus CLIs"** for everything Python, and
+**[`FRONTEND.md`](../llmind-web/FRONTEND.md) → Component Map** for everything
+TypeScript. What belongs HERE is the orientation you need before opening either.)*
+
 ```
 LLMind/
-├── LEARN.md                     ← This guide
+├── llmind-python/     🐍 Everything Python — three roles in one package:
+│   ├─ backend/           the FastAPI server the browser talks to
+│   ├─ pipeline/ + *.py   the data pipeline (scrape → embed → project) and CLIs
+│   └─ utils/             shared models, prompts, clients, storage
 │
-├── llmind-python/               ← 🐍 ALL Python code
-│   ├── pyproject.toml              Project metadata + dependencies (uv/pip)
-│   ├── config.py                   Centralised settings (env vars, defaults)
-│   ├── scrape_projects.py          Web scraper CLI (Typer)
-│   ├── database_pipeline.py        CLI: init, analyze, ingest, cluster, farthest
-│   ├── generate_taxonomy.py        LLM taxonomy generation CLI
-│   ├── backend/                    FastAPI web server
-│   │   ├── main.py                    App entry point (mounts routers)
-│   │   ├── related_projects/          /api/related-projects/* routes
-│   │   │   ├── router.py                Pydantic request/response models + endpoints
-│   │   │   └── service.py               Business logic (search, generate nodes)
-│   │   └── taxonomy/                  /api/taxonomy/* routes
-│   │       ├── router.py                Endpoint + models for taxonomy generation
-│   │       └── service.py               Thin wrapper calling generate_taxonomy
-│   ├── pipeline/                   Modular data-processing logic
-│   │   ├── constants.py               Derived settings from config.py
-│   │   ├── data_ops.py                Clean, extract, build embedding records
-│   │   ├── ml.py                      UMAP, KMeans, farthest-point, normalisation
-│   │   └── viz.py                     Matplotlib cluster scatter plots
-│   ├── utils/                      Shared utilities
-│   │   ├── clients.py                 OpenAI/vLLM client factories
-│   │   ├── prompts.py                 System + user prompt templates
-│   │   ├── models.py                  Pydantic data models (Taxonomy, ProjectRecord, EmbedRecord)
-│   │   ├── modes.py                   BackendMode + ContentMode enums
-│   │   ├── supabase.py                All Supabase operations (upsert, fetch, artefacts)
-│   │   ├── iter.py                    Chunked iteration helper
-│   │   ├── json.py                    JSON load/save/extract-from-markdown utilities
-│   │   └── _transcribe.py            Audio transcription utility (Whisper/diarization)
-│   └── migrations/                 SQL schema files for Supabase
-│       ├── supabase_raw_table.sql     raw_projects table
-│       ├── media_doc_tables.sql       media_doc + 3 embedding tables + pgvector
-│       └── migrate_media_emb_columns.sql  Cloud/local column migration
-│
-└── llmind-web/                  ← ⚛️ Next.js frontend
-    ├── next.config.ts              API proxy rewrite rules + remote image patterns
-    ├── package.json                Dependencies (Next 16, React 19, mind-elixir, etc.)
-    ├── components.json             shadcn/ui configuration
-    ├── src/
-    │   ├── app/                    Next.js App Router
-    │   │   ├── layout.tsx             Root layout (Geist fonts, Providers wrapper)
-    │   │   ├── providers.tsx          React Query QueryClientProvider + Sonner Toaster
-    │   │   ├── page.tsx               Home page (navigation cards)
-    │   │   ├── globals.css            Tailwind 4 + shadcn design tokens (light/dark)
-    │   │   └── mindmap/
-    │   │       └── page.tsx           THE MAIN PAGE (mind map + dialogs + panels)
-    │   ├── components/
-    │   │   ├── mindmap/
-    │   │   │   ├── simple-mindmap.tsx    Mind Elixir wrapper component
-    │   │   │   └── simple-project-panel.tsx  Project list + detail split view
-    │   │   └── ui/                    shadcn/ui primitives (button, card, dialog, etc.)
-    │   ├── features/
-    │   │   └── mindmap/
-    │   │       ├── types.ts             MindmapNode, MindmapSelection, FlattenedMindmapNode, TopicProjectsMap
-    │   │       ├── components/
-    │   │       │   ├── generate-nodes-dialog.tsx       Two-step dialog for node generation
-    │   │       │   └── generate-taxonomy-dialog.tsx    Two-step dialog for full taxonomy generation
-    │   │       ├── data/
-    │   │       │   └── schema-mindmap-data.ts  Converts taxonomy JSON → MindmapNode tree
-    │   │       └── hooks/
-    │   │           ├── use-related-projects-query.ts       React Query hook (search)
-    │   │           ├── use-generate-nodes-mutation.ts      Mutation hook (generate + flatten)
-    │   │           └── use-generate-taxonomy-mutation.ts   Mutation hook (full taxonomy generation)
-    │   ├── store/
-    │   │   └── mindmap-store.ts       Zustand: topic, projects, taxonomy, context (persisted)
-    │   ├── lib/
-    │   │   ├── api-client.ts          Axios instance (baseURL: '/')
-    │   │   └── utils.ts               cn() helper for Tailwind class merging
-    │   └── types/
-    │       └── openapi.ts            Auto-generated TypeScript types from backend OpenAPI spec
-    └── public/
-        ├── schema_selected.json    Initial taxonomy data (farthest-selected projects)
-        └── schema_all-rows.json    Full taxonomy data (all projects)
+└── llmind-web/        ⚛️ The Next.js frontend — one main page (src/app/mindmap/)
+    ├─ components/         views (mind map, design-space surface, schema table…)
+    ├─ features/           hooks + pure logic per feature area (unit-tested)
+    ├─ store/              ONE Zustand store = the whole exploration, persisted
+    └─ lib/                api client, session I/O, export, shared interactions
 ```
+
+Three orientation rules that survive every refactor:
+1. **Routers validate, services do the work** (backend) — see §8.2.
+2. **Pure logic lives in `features/*` and `pipeline/*`** so it is unit-testable
+   without servers; components and CLIs stay thin.
+3. **The store is the single source of exploration truth** (frontend) — views are
+   projections of it; React Query owns only server data.
 
 ---
 
 ## 5. Layer 1 — Foundations (Start Here)
 
 ### 5.1 Configuration & Environment Variables
+
+> **Current values:** the env-var table (and the deployed-vs-default values that
+> matter) is [`BACKEND.md`](../llmind-python/BACKEND.md) → Environment Variables.
+> This section teaches how the config *mechanism* works.
 
 **File:** `llmind-python/config.py`
 
@@ -617,7 +555,7 @@ uv run database_pipeline.py ingest --embed-mode vllm --content-mode all
 
 **How it works in the ingest flow:**
 1. For each cleaned record, extract the relevant text field based on `ContentMode`.
-2. Send that text to an embedding model — OpenAI's `text-embedding-3-small` (1536 dimensions) or a local vLLM model like `BAAI/bge-small-en-v1.5` (384 dimensions).
+2. Send that text to an embedding model — OpenAI's `text-embedding-3-small` (1536 dimensions), or a local model. (The live LLMind stack uses `nomic-embed-text-v1.5`, **768 dimensions** — see §11.5; `bge-small-en-v1.5` at 384 is the old default this Supabase path was sized for.)
 3. Get back a list of floating-point numbers.
 4. Store that number list in the appropriate embedding table column.
 
@@ -822,6 +760,11 @@ The inner `_artefacts_from_rows()` function selects the text field based on `Con
 
 ## 8. Layer 4 — The FastAPI Backend
 
+> **Current inventory:** the full endpoint list (incl. the projection, corpus
+> annotation, candidates, and jobs subsystems this layer gained after this guide
+> was written) is [`BACKEND.md`](../llmind-python/BACKEND.md) → API Endpoints.
+> This layer teaches the *patterns* those endpoints all follow.
+
 ### 8.1 App Entry Point
 
 **File:** `llmind-python/backend/main.py`
@@ -969,49 +912,45 @@ The `QueryClient` is created inside `useState` to ensure it's only created once 
 
 ---
 
-### 9.2 API Proxy — How Frontend Talks to Backend
+### 9.2 Direct API Connection — How Frontend Talks to Backend
 
-**File:** `llmind-web/next.config.ts`
+*(Rewritten 2026-07-03 — this section previously taught the proxy architecture,
+which was **reversed**. The story of why is itself a good lesson.)*
 
-```typescript
-const rawBackendUrl =
-  process.env.BACKEND_URL ??
-  process.env.NEXT_PUBLIC_BACKEND_URL ??
-  'http://0.0.0.0:8000';
+**File:** `llmind-web/src/lib/api-client.ts`
 
-const BACKEND_URL = rawBackendUrl.replace(/\/$/, '');
-
-const nextConfig: NextConfig = {
-  images: {
-    remotePatterns: [
-      { protocol: 'https', hostname: 'images.unsplash.com' },
-    ],
-  },
-  async rewrites() {
-    return [{
-      source: '/api/:path*',
-      destination: `${BACKEND_URL}/api/:path*`,
-    }];
-  },
-};
-```
-
-This is a **proxy rewrite**: when the frontend makes a request to `/api/related-projects/search`, Next.js silently forwards it to `http://0.0.0.0:8000/api/related-projects/search` (the Python backend). The `images.remotePatterns` config allows Next.js Image optimization for external image hosts.
-
-**Why?** This avoids CORS issues and keeps API keys server-side. The frontend never needs to know the backend's real address.
-
-The **API client** (`lib/api-client.ts`) is an Axios instance with `baseURL: '/'` — all requests go to the same origin, hitting the Next.js proxy:
+The browser calls the FastAPI backend **directly**, not through Next.js:
 
 ```typescript
 const api = axios.create({
-    baseURL: '/',
-    headers: { 'Content-Type': 'application/json' },
+  baseURL: process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000',
+  headers: { 'Content-Type': 'application/json' },
 });
 ```
+
+and the backend enables CORS for it (`backend/main.py` adds `CORSMiddleware`
+with open origins — safe here because no credentials are used).
+
+**The lesson.** The original architecture WAS the textbook one: a Next.js
+`rewrites()` proxy (`/api/*` → the backend), `baseURL: '/'`, no CORS needed.
+It failed in practice for one very LLMind-specific reason: **local-LLM responses
+take 50+ seconds**, and the dev proxy silently drops long upstream responses —
+the backend returns 200, the browser never receives it, and the UI hangs with
+no error anywhere. A textbook pattern, defeated by a non-textbook workload.
+The rewrite in `next.config.ts` still exists as a fallback (used only if
+`NEXT_PUBLIC_API_BASE_URL` is set to an empty string); the same workload
+pressure later pushed long endpoints to the **202 + job-polling** pattern
+(`src/lib/run-job.ts`, BACKEND.md "Async generation") so no single HTTP request
+stays open for minutes at all. Full decision record: root `CLAUDE.md` → "API
+connection".
 
 ---
 
 ### 9.3 React Query — Server State Management
+
+> **Current inventory:** all 21 query/mutation hooks are tabulated in
+> [`REACT-QUERY.md`](../llmind-web/REACT-QUERY.md). This section teaches the pattern
+> with the original three.
 
 **Files:**
 - `features/mindmap/hooks/use-related-projects-query.ts` — Fetches related projects
@@ -1073,6 +1012,11 @@ Both dialogs share a consistent design pattern: shadcn/ui `Dialog` primitives, a
 ---
 
 ### 9.4 Zustand Store — Client State
+
+> **Current shape:** the store has since grown to hold the WHOLE exploration
+> (tree, coords, candidates, events, reflections…) — see
+> [`ZUSTAND.md`](../llmind-web/ZUSTAND.md) for the live state shape, actions, and
+> persistence rules. This section teaches the store *mechanism*.
 
 **File:** `llmind-web/src/store/mindmap-store.ts`
 
@@ -1321,6 +1265,9 @@ rpc_response = supabase_client.rpc(
 
 ### 10.2 Database Schema & Migrations
 
+> **Current schema:** [`BACKEND.md`](../llmind-python/BACKEND.md) → "Data pipeline
+> & corpus CLIs" is the SSOT (including the dormant-vs-live storage-path caveat).
+
 **Files:** `llmind-python/migrations/`
 
 Three SQL files define the complete database schema:
@@ -1506,13 +1453,21 @@ This is the part most people get wrong, so be precise about it. `mode = "vllm"` 
 | Taxonomy generation (`POST /api/taxonomy/generate`) | ✅ Yes | `VLLM_BASE_URL`, model `VLLM_MODEL` |
 | Node generation (`POST /api/related-projects/generate-nodes`) | ✅ Yes | `VLLM_BASE_URL` (or per-request `base_url`) |
 | Pipeline embeddings (`ingest` / `cluster` / `farthest` with `--embed-mode vllm`) | ✅ Yes | `--vllm-base-url`, stored in `embedding_local` `VECTOR(384)` |
-| **Related-projects search embedding** (`POST /api/related-projects/search`) | ❌ **No** | **Always OpenAI cloud** |
+| **Related-projects search embedding** (`POST /api/related-projects/search`) | governed by `VECTOR_STORE`, not `mode` | local npz index (`VECTOR_STORE=local`, the live setup) or OpenAI + Supabase |
 
-> 🔑 **The search gotcha.** `search_related_projects()` in [`related_projects/service.py:216`](../llmind-python/backend/related_projects/service.py:216) is hardcoded to `build_openai_client()`. It embeds the search query with OpenAI **regardless of `mode`**. So even in "local" mode, the *related projects* panel still needs a valid `OPENAI_API_KEY` — unless you skip Supabase entirely by sending `should_query_supabase: false`.
->
-> To go **fully local** for search as well, you'd have to edit that function to branch on `BackendMode` (the same way node generation does) and re-embed your corpus locally so the stored vectors match the query model's dimensions. That's a code change, not a config change.
+> 🔑 **The search switch (updated 2026-07-03 — an earlier version of this
+> section described search as hardcoded to OpenAI; that was fixed).** Search is
+> governed by **`VECTOR_STORE`**, not by the request's `mode`: with
+> `VECTOR_STORE=local` (the shipped `.env`), `fetch_related_projects` embeds the
+> query with the local model and brute-force cosine-searches the offline
+> `data/local_index.npz` — no OpenAI key, no Supabase. Without it, the query is
+> embedded with OpenAI and matched via a Supabase pgvector RPC. Build the local
+> index once with `build_local_index.py` (see Quick Launch).
 
-**Bottom line for a no-code-change setup:** local generation works out of the box; keep `OPENAI_API_KEY` set for the search panel, or bypass search with `should_query_supabase: false`.
+**Bottom line:** with `VECTOR_STORE=local` + a built index, generation AND search
+run fully local out of the box. The design-space subsystem (placement, annotation,
+candidates, steering) is local-only by construction — it reads the npz index and
+the local models directly (BACKEND.md).
 
 ---
 
@@ -1636,25 +1591,33 @@ VLLM_MODEL=qwen
 
 ---
 
-### 11.5 Embedding Dimensions — The 384 vs 1536 Trap
+### 11.5 Embedding Dimensions — Match the Model to Every Artifact
 
-This only matters if you also want **local embeddings** (the data pipeline, `--embed-mode vllm`), not just local chat.
+*(Rewritten 2026-07-03 — the original taught a "384 vs 1536" trap that no longer
+describes the live stack.)*
 
-The database has two embedding columns, sized for specific models:
+The one rule: **every artifact built from embeddings is sized to the model that
+built it, and nothing converts between sizes.** A model change means rebuilding
+everything downstream, in order.
 
-| Backend | Column | Dimensions | Default model |
-|---|---|---|---|
-| `openai` | `embedding_cloud` | **1536** | `text-embedding-3-small` |
-| `vllm` | `embedding_local` | **384** | `BAAI/bge-small-en-v1.5` |
+**The live stack is 768-d.** `.env` sets
+`VLLM_EMBED_MODEL=text-embedding-nomic-embed-text-v1.5` (768 dimensions), and every
+live artifact matches: `data/local_index.npz` (209×768), the frozen projection
+(`surface.json` → `input_dims: 768`), and the register map (768×768). The
+`config.py` *default* (`bge-small-en-v1.5`, 384-d) is stale and never used — a
+default-vs-deployed gap that has misled this very documentation before. The
+backend even hard-fails `/locate` on a dimension mismatch, precisely so a wrong
+model produces an error instead of silently meaningless coordinates.
 
-The `embedding_local` column is `VECTOR(384)` — it fits `bge-small-en-v1.5` exactly. If you serve a **different** embedding model (e.g. `bge-m3` is 1024-dim, `nomic-embed-text` is 768-dim), the dimensions won't match and inserts will fail.
-
-To switch local embedding models you must, in order:
-1. Set `VLLM_EMBED_MODEL` (and `--vllm-model` on the CLI) to the new model.
-2. Change `VECTOR(384)` to the new dimension in [`migrations/media_doc_tables.sql`](../llmind-python/migrations/media_doc_tables.sql) (and the migration file), and re-run the migration.
-3. Re-run `uv run python database_pipeline.py ingest --embed-mode vllm` to repopulate `embedding_local`.
-
-If you only need **local generation** (taxonomy + nodes) and are happy to keep search on OpenAI, you can ignore this entire subsection.
+To switch the local embedding model, in order:
+1. Set `VLLM_EMBED_MODEL` to the new model (and serve it in LM Studio).
+2. Rebuild the index: `uv run python build_local_index.py`.
+3. Refit the projection + register map: `uv run python database_pipeline.py
+   project` then `project-align`.
+4. Only if you use the dormant **Supabase path**: its pgvector columns are also
+   size-locked (`embedding_cloud VECTOR(1536)` for `text-embedding-3-small`,
+   `embedding_local VECTOR(384)` for the old bge default) — change the migration
+   and re-ingest. See BACKEND.md → "Data pipeline & corpus CLIs".
 
 ---
 

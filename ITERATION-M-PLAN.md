@@ -6,7 +6,10 @@ forward), and the §5.6 open questions. Two tracks with different readers:*
 - **Part I — Engineering** is an execution spec: each item has a concrete fix design,
   a *meaning-level gate* (the §5.4 lesson: tests must ask what a result should MEAN,
   not just whether the math ran), and enough file/line precision to act on without
-  re-derivation. Nothing in Part I is done yet.
+  re-derivation. **Status 2026-07-03: Wave 1 (M-E1–E13) SHIPPED** — all suites green
+  (backend 147/0, frontend 72/0, tsc/eslint clean), frontend preview-verified; see
+  PROCESS.md §13 for the re-annotation follow-up and the bonus Windows-CLI fix.
+  Wave 3 (M-E7, M-E10, M-E11) remains open by design (post-pilot).
 - **Part II — Design-research** is for reading: the questions the code cannot answer,
   organized by *who* can answer them (study participants / an offline experiment /
   the project owner), each tied to the report section that raised it.
@@ -245,6 +248,11 @@ Gate: command output matches a hand check once. Effort: trivial-small.
 *The engineering above protects instruments; none of it produces knowledge. These
 are the open questions, by who can answer them. Each names the report section that
 raised it and the decision it informs.*
+
+*(SSOT note, 2026-07-03: the study **protocol** lives in
+`documentations/USER-TESTING-PLAN.md` — its §9 now carries the M-R2/M-R3/M-R4 and
+placement probes as protocol steps. This Part II is the rationale/decision layer
+behind them, not a second protocol.)*
 
 ### II.A Questions only study participants can answer
 

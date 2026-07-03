@@ -99,6 +99,11 @@ interface MindmapStoreState {
    * from ("Edit Brief & Taxonomy" in the navigator). Distinct from candidate
    * briefs: this scopes the SPACE, those describe designs within it. */
   projectBrief: string;
+  /** Study participant tag (ITERATION-M M-E12) — empty outside a study. Stamped
+   * into the exported study bundle and its filename so a session is attributable
+   * without threading it through every event. Set via a facilitator prompt or
+   * the `?p=` URL param. */
+  participantId: string;
   /** The working tree — shared by the mind map and the design space, persisted
    * so generated nodes survive a reload (they are NOT derivable from taxonomy). */
   nodes: ReadonlyArray<MindmapNode>;
@@ -135,6 +140,8 @@ interface MindmapStoreState {
   setTaxonomy: (taxonomy: TaxonomyInput) => void;
   /** Persists the project overview a taxonomy was generated from. */
   setProjectBrief: (brief: string) => void;
+  /** Sets the study participant tag (trimmed). */
+  setParticipantId: (id: string) => void;
   setNodes: (nodes: ReadonlyArray<MindmapNode>) => void;
   mergeCoords: (coords: CoordMap) => void;
   /** Drop coordinates (e.g. after a rename — the old embedding no longer applies). */
@@ -186,6 +193,7 @@ const createInitialState = () => ({
   selectedTopic: '',
   taxonomy: null as TaxonomyInput | null,
   projectBrief: '',
+  participantId: '',
   nodes: cloneNodes(SCHEMA_MINDMAP_NODES) as ReadonlyArray<MindmapNode>,
   coords: {} as CoordMap,
   discovered: {} as Record<string, GenerationTrail>,
@@ -211,6 +219,7 @@ export type SessionSnapshot = Pick<
   | 'selectedTopic'
   | 'taxonomy'
   | 'projectBrief'
+  | 'participantId'
   | 'nodes'
   | 'coords'
   | 'discovered'
@@ -233,6 +242,7 @@ export const selectSessionSnapshot = (state: SessionSnapshot): SessionSnapshot =
   selectedTopic: state.selectedTopic,
   taxonomy: state.taxonomy,
   projectBrief: state.projectBrief,
+  participantId: state.participantId,
   nodes: state.nodes,
   coords: state.coords,
   discovered: state.discovered,
@@ -292,6 +302,7 @@ export const useMindmapStore = create<MindmapStoreState>()(
             };
           }),
         setProjectBrief: (brief) => set(() => ({ projectBrief: brief })),
+        setParticipantId: (id) => set(() => ({ participantId: id.trim() })),
         setNodes: (nodes) => set(() => ({ nodes })),
         mergeCoords: (coords) =>
           set((state) => ({ coords: { ...state.coords, ...coords } })),

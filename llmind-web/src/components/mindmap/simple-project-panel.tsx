@@ -104,7 +104,7 @@ function ProjectList({ items, activeId, onSelect }: ProjectListProps) {
   if (items.length === 0) {
     return (
       <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-        No projects found.
+        No closely related corpus projects for this selection.
       </p>
     );
   }

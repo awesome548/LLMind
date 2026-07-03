@@ -1,44 +1,35 @@
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/src/components/ui/card';
 
-const links = [
-  {
-    href: '/mindmap',
-    title: 'Mind Map Demo',
-    description: 'Simple topic selection with a related project panel.',
-  },
-  {
-    href: '/projects',
-    title: 'Projects Demo',
-    description: 'Simple project panel page with sample data.',
-  },
-] as const;
-
 export default function HomePage() {
   return (
-    <main className="mx-auto min-h-screen max-w-7xl px-4 py-12">
+    <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center px-4 py-12">
       <section className="mb-8 space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">LLMind Web</h1>
+        <h1 className="text-3xl font-bold tracking-tight">LLMind</h1>
         <p className="text-muted-foreground">
-          Minimal pages based on the MindMap and ProjectPanel concepts.
+          A research prototype for LLM-assisted design-space exploration in media
+          architecture — a living design-space schema with an evidence map,
+          precedent-grounded generation, and design candidates.
         </p>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2">
-        {links.map((link) => (
-          <Card key={link.href}>
-            <CardHeader>
-              <CardTitle>{link.title}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-sm text-muted-foreground">{link.description}</p>
-              <Link href={link.href} className="text-sm font-semibold underline underline-offset-4">
-                Open page
-              </Link>
-            </CardContent>
-          </Card>
-        ))}
-      </section>
+      <Card>
+        <CardHeader>
+          <CardTitle>Open the workspace</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Structure (tree · schema · cross-tab), the Design Space map, and
+            Perspectives — one shared exploration state.
+          </p>
+          <Link
+            href="/mindmap"
+            className="text-sm font-semibold underline underline-offset-4"
+          >
+            Enter LLMind →
+          </Link>
+        </CardContent>
+      </Card>
     </main>
   );
 }

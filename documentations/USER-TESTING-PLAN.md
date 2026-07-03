@@ -1,4 +1,9 @@
-# USER-TESTING-PLAN.md — draft study plan (2026-06-13, Iteration L)
+# USER-TESTING-PLAN.md — draft study plan (2026-06-13, Iteration L; probes extended 2026-07-03)
+
+> **Live document** (2026-07-03 consolidation): this file and
+> [USER-FLOWS.md](USER-FLOWS.md) are the study's single source of truth — other
+> docs (PROJECT-REPORT §6 item 2, ITERATION-M-PLAN Part II) point here and add
+> rationale, not protocol. §9 folds in the ITERATION-M probes.
 
 A value-proposition-centred test plan. Method skeleton inherits the
 dissertation's protocol (think-aloud + semi-structured interview + CSI); the
@@ -159,3 +164,35 @@ build L-D SnapShot compare).
   the session JSON at the END of every session (it is the data).
 - **Next steps / priorities:** filled by §7's output — the synthesis decides
   which Part 13 items get built, in which order.
+- **Ethics (if §9.1 is adopted):** the planted-dimension probe involves a brief
+  deception element (one deliberately weak dimension presented as genuine);
+  the protocol must include a debrief disclosure, and the supervisor/ethics
+  sign-off must cover it explicitly.
+
+## 9. Probe additions (2026-07-03, from ITERATION-M-PLAN Part II)
+
+These extend §4's measures; rationale lives in ITERATION-M-PLAN (M-R2–M-R4).
+
+1. **Planted-dimension calibration probe (M-R2) — pending owner adoption
+   (ITERATION-M M-R9c-5).** The §4.5 trust-delta measures trust *gain*; this
+   measures *calibration*. During T1, ONE deliberately weak dimension (facilitator-
+   authored, evidence-styled rationale attached) is present among the genuine
+   ones. Calibrated trust = higher acceptance of good dimensions AND rejection of
+   the plant; mere trust = the plant is accepted too. Requires: a study flag to
+   inject the planted aspect + rationale (small engineering, folds into study
+   mode), the §8 ethics note, and a debrief reveal.
+2. **Structure-level fixation analysis (M-R3) — analysis, not protocol.** From
+   each session's event log: compare the distribution of attention (selections,
+   generations, choices) across aspects before vs after an accepted coverage-probe
+   proposal, and against a manually added aspect. No session-time cost; informs
+   whether dimension-level AI proposals need added friction.
+3. **Placement-semantics probes (from PROJECT-REPORT §5.4) — now explicit.**
+   During T3/T4 think-aloud: (a) does the participant *notice* the washed-out
+   fill on low-support dots (the false-familiarity check the Part 11 placement
+   trade created), and (b) when asked "what does this dot's position mean?", do
+   they answer "related to these projects" (intended: neighborhood) or "exactly
+   here" (over-reading: coordinate)? Code both; no extra task needed.
+4. **Honesty-signal usage (M-R4).** Instrumented already (legend opens, tooltip
+   hovers in `usage`); pair with a T1/T3 think-aloud moment: "how seriously
+   would you take this dot?" — the answer decides §6-item-4's single-trust-cue
+   design.

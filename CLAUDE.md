@@ -17,15 +17,31 @@ llmind-web/      Next.js frontend (React 19, Bun)
 
 ## Detailed Documentation
 
-| Doc | Contents |
-|-----|----------|
-| [`PROJECT-REPORT.md`](PROJECT-REPORT.md) | The master report: what the system is, the research argument, iterations, critical reflection, §5.7 code-verification audit + known defects |
-| [`PROCESS.md`](PROCESS.md) | Session handoff: execution state, hard-won local-LLM stack rules, next steps |
-| [`ITERATION-M-PLAN.md`](ITERATION-M-PLAN.md) | The next-iteration plan: engineering fixes (§5.7 defects, with gates) + design-research questions + pilot sequencing |
-| [`llmind-python/BACKEND.md`](llmind-python/BACKEND.md) | API endpoints, env vars, architecture, CLI commands, error patterns |
-| [`llmind-web/FRONTEND.md`](llmind-web/FRONTEND.md) | Frontend architecture, scripts, feature flows, component map |
-| [`llmind-web/ZUSTAND.md`](llmind-web/ZUSTAND.md) | Zustand store shape, actions, persistence |
-| [`llmind-web/REACT-QUERY.md`](llmind-web/REACT-QUERY.md) | React Query hooks — queries and mutations used in this project |
+**One owner per topic** (2026-07-03 consolidation). Docs are either **LIVE**
+(kept current — edit the owner, never a copy) or **ARCHIVED** (historical record —
+add dated banners, never rewrite the body).
+
+### Live — single source of truth per topic
+
+| Doc | Owns |
+|-----|------|
+| [`PROJECT-REPORT.md`](PROJECT-REPORT.md) | The master report: what the system is + why (§1.3 justifications), the research argument, iterations synthesis, §5.7 code-verification audit + known defects |
+| [`llmind-python/BACKEND.md`](llmind-python/BACKEND.md) | **Everything backend**: API endpoints, env vars (deployed values), architecture, projection/annotation subsystems, error patterns, and the full data-pipeline & CLI reference |
+| [`llmind-web/FRONTEND.md`](llmind-web/FRONTEND.md) | Frontend architecture, component map, feature flows, the locked design language, study mode |
+| [`llmind-web/ZUSTAND.md`](llmind-web/ZUSTAND.md) | Store shape, actions, persistence + session-load trust boundary |
+| [`llmind-web/REACT-QUERY.md`](llmind-web/REACT-QUERY.md) | Every query/mutation hook |
+| [`PROCESS.md`](PROCESS.md) | Session handoff: execution state + the hard-won local-LLM stack rules (§2) |
+| [`ITERATION-M-PLAN.md`](ITERATION-M-PLAN.md) | Next-iteration plan: engineering (Wave 1 shipped) + design-research rationale + pilot sequencing |
+| [`documentations/USER-TESTING-PLAN.md`](documentations/USER-TESTING-PLAN.md) + [`USER-FLOWS.md`](documentations/USER-FLOWS.md) | **The study protocol SSOT** (incl. the §9 probes) + task templates |
+| [`documentations/LEARN.md`](documentations/LEARN.md) | Onboarding: mental models per layer (inventories live with the owners above) |
+| Thin hubs/launchers | root [`README.md`](README.md), [`llmind-python/CLAUDE.md`](llmind-python/CLAUDE.md), the two subsystem `README.md`s — pointers only |
+
+### Archived — provenance, banner-only
+
+`documentations/`: `DESIGN-SPACE-VIZ.md`, `DESIGN-SPACE-ITERATION-PLAN.md` (the
+full Parts 1–13 record), `DESIGN-SPACE-PERSPECTIVES-PLAN.md`,
+`DESIGN-SPACE-TESTING.md`, `PROJECT_DEV.md` (superseded). Bodies stay unmodified;
+corrections go in dated banners at the top.
 
 ---
 
