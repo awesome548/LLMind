@@ -26,6 +26,7 @@ add dated banners, never rewrite the body).
 | Doc | Owns |
 |-----|------|
 | [`PROJECT-REPORT.md`](PROJECT-REPORT.md) | The master report: what the system is + why (§1.3 justifications), the research argument, iterations synthesis, §5.7 code-verification audit + known defects |
+| [`FEATURE-ATLAS.md`](FEATURE-ATLAS.md) | Writing companion & decision aid: every implemented feature — purpose (design-process stage), mechanism + interconnection diagrams, check recipes, intended-vs-implemented deltas, critique, and the §10 question bank |
 | [`llmind-python/BACKEND.md`](llmind-python/BACKEND.md) | **Everything backend**: API endpoints, env vars (deployed values), architecture, projection/annotation subsystems, error patterns, and the full data-pipeline & CLI reference |
 | [`llmind-web/FRONTEND.md`](llmind-web/FRONTEND.md) | Frontend architecture, component map, feature flows, the locked design language, study mode |
 | [`llmind-web/ZUSTAND.md`](llmind-web/ZUSTAND.md) | Store shape, actions, persistence + session-load trust boundary |
